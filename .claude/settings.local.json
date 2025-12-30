@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node:*)",
+      "Bash(dir:*)",
+      "Bash(npm install:*)",
+      "Bash(findstr:*)",
+      "Bash(mkdir:*)",
+      "Bash(netstat:*)",
+      "Bash(del \"f:\\KHANGVLP\\THACO\\NodeS7_simple\\modules\\SHUTTLE\\shuttle_state.json\")",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(del \"f:\\\\KHANGVLP\\\\THACO\\\\NodeS7_simple\\\\test_pathfinding_same_floor.js\")",
+      "Bash(del \"f:\\\\KHANGVLP\\\\THACO\\\\NodeS7_simple\\\\check_table_structure.js\")",
+      "Bash(del modulesSHUTTLEshuttleSelectionService.js)",
+      "Bash(del test_shuttle_auto_select.js SHUTTLE_AUTO_SELECT_README.md)",
+      "Bash(del test_pathfinding_cross_floor.js check_cells.js)",
+      "Bash(del test_universal_pathfinding.js check_available_cells.js debug_floor_connections.js debug_lifter_selection.js)",
+      "Bash(del test_universal_pathfinding_simple.js test_universal_pathfinding_detailed.js UNIVERSAL_PATHFINDING_README.md)",
+      "Bash(ls:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
