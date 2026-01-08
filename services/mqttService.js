@@ -55,20 +55,28 @@ function initializeMqttBroker(io) { // Accept io instance
 }
 
 function publishToTopic(topic, payload) {
+    logger.info(`[MqttService] Attempting to publish to topic: ${topic}`); // <-- ADDED THIS LOG
+
+    const payloadBuffer = Buffer.from(JSON.stringify(payload)); // <-- Ensure payload is a Buffer
+
     const packet = {
         cmd: 'publish',
         topic: topic,
-        payload: JSON.stringify(payload),
-        qos: 1, // At least once
+        payload: payloadBuffer,
+        qos: 1,
         retain: false,
     };
+
     aedes.publish(packet, (err) => {
+        // This callback should ALWAYS execute, even if err is null.
         if (err) {
-            logger.error(`[MqttService] Error publishing to ${topic}:`, err);
+            logger.error(`[MqttService] PUBLISH CALLBACK: Error publishing to ${topic}:`, err);
         } else {
-            logger.info(`[MqttService] Published command to ${topic}`);
+            logger.info(`[MqttService] PUBLISH CALLBACK: Successfully published command to ${topic}`);
         }
     });
+
+    logger.info(`[MqttService] aedes.publish() called for ${topic}. Waiting for callback.`); // <-- ADDED THIS LOG
 }
 
 module.exports = { initializeMqttBroker, aedes, publishToTopic };

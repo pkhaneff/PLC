@@ -27,7 +27,7 @@ const uvicornFormatter = winston.format.combine(
 
 function configureLogging() {
     const logger = winston.createLogger({
-        level: 'debug',
+        level: 'info',
         format: winston.format.combine(
             winston.format.errors({ stack: true }),
             winston.format.json()
@@ -35,7 +35,7 @@ function configureLogging() {
         defaultMeta: { service: 'app' },
         transports: [
             new winston.transports.Console({
-                level: 'debug',
+                level: 'info',
                 format: uvicornFormatter
             })
         ]

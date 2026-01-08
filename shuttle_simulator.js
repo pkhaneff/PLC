@@ -3,7 +3,7 @@ const mqtt = require('mqtt');
 // --- Config ---
 const MQTT_BROKER_URL = 'mqtt://localhost:1883';
 const LOOP_INTERVAL = 500; 
-const NODE_TRAVEL_TIME_MS = 3000;
+const NODE_TRAVEL_TIME_MS = 1500;
 const COMMAND_TOPIC = 'shuttle/command/+';
 const INFO_TOPIC_PREFIX = 'shuttle/information/';
 const EVENTS_TOPIC = 'shuttle/events'; 
@@ -33,6 +33,8 @@ let shuttleStates = SHUTTLE_CONFIGS.map(config => ({
     path: [],
     currentPathIndex: 0,
     lastMoveTimestamp: 0,
+    onArrival: null, // What event to fire when the path is complete
+    taskInfo: null,  // The task context
 }));
 
 /**
@@ -52,7 +54,7 @@ function publishEvent(eventName, shuttleNo, data = {}) {
         if (err) {
             console.error(`[Simulator] Failed to publish event ${eventName} for ${shuttleNo}:`, err);
         } else {
-            // console.log(`[Simulator] Published event ${eventName} for ${shuttleNo}`);
+            console.log(`[Simulator] Published event ${eventName} for ${shuttleNo}`);
         }
     });
 }
@@ -75,13 +77,22 @@ function processMovement(state) {
     // Determine the next node
     const nextNodeIndex = state.currentPathIndex + 1;
     if (nextNodeIndex >= state.path.length) {
-        // Path is complete, move to idle state
-        console.log(`[Simulator] Shuttle ${state.no} completed its path at ${state.qrCode}.`);
-        publishEvent('shuttle-completed-path', state.no, { finalNode: state.qrCode });
+        const arrivalEvent = state.onArrival;
+        console.log(`[Simulator] Shuttle ${state.no} completed its path at ${state.qrCode}. Firing event: ${arrivalEvent}`);
+        
+        if (arrivalEvent) {
+            publishEvent(arrivalEvent, state.no, { taskId: state.taskInfo.taskId });
+        } else {
+            console.warn(`[Simulator] Shuttle ${state.no} completed a path but had no onArrival event stored.`);
+        }
+
+        // Reset state and move to idle
         state.shuttleStatus = SHUTTLE_STATUS.IDLE;
         state.commandComplete = COMMAND_COMPLETE.DONE;
         state.path = [];
         state.currentPathIndex = 0;
+        state.onArrival = null;
+        state.taskInfo = null;
         return;
     }
     const nextNode = state.path[nextNodeIndex];
@@ -154,17 +165,39 @@ client.on('message', (topic, message) => {
     }
 
     try {
-        const path = JSON.parse(message.toString());
-        if (Array.isArray(path) && path.length > 0) {
-            console.log(`[Simulator] Shuttle ${shuttleCode} starting new path with ${path.length} nodes. First node: ${path[0]}`);
-            publishEvent('shuttle-task-started', shuttle.no, { pathLength: path.length, startNode: path[0] });
-            shuttle.path = path;
-            shuttle.currentPathIndex = 0;
-            // The first node in the path is the current location
-            shuttle.qrCode = path[0]; 
-            shuttle.shuttleStatus = SHUTTLE_STATUS.NORMAL_SPEED;
-            shuttle.commandComplete = COMMAND_COMPLETE.IN_PROGRESS;
-            shuttle.lastMoveTimestamp = Date.now(); // Start timer immediately
+        const command = JSON.parse(message.toString());
+
+        // Check if it's the expected command object format
+        if (command && command.path && command.onArrival) {
+            const pathObject = command.path;
+            
+            // Convert the path object to a simple array of node names
+            const newPath = [];
+            for (let i = 1; i <= pathObject.totalStep; i++) {
+                const step = pathObject[`step${i}`];
+                if (step) {
+                    const nodeName = step.split('>')[0];
+                    newPath.push(nodeName);
+                }
+            }
+
+            if (newPath.length > 0) {
+                console.log(`[Simulator] Shuttle ${shuttleCode} received new task. Path: [${newPath.join(', ')}]. Event on arrival: ${command.onArrival}`);
+                publishEvent('shuttle-task-started', shuttle.no, { pathLength: newPath.length, startNode: newPath[0] });
+                
+                shuttle.path = newPath;
+                shuttle.onArrival = command.onArrival;
+                shuttle.taskInfo = command.taskInfo;
+                shuttle.currentPathIndex = 0;
+                // The first node in the path is the current location
+                shuttle.qrCode = newPath[0]; 
+                shuttle.shuttleStatus = SHUTTLE_STATUS.NORMAL_SPEED;
+                shuttle.commandComplete = COMMAND_COMPLETE.IN_PROGRESS;
+                shuttle.lastMoveTimestamp = Date.now(); // Start timer immediately
+            }
+
+        } else {
+            console.warn(`[Simulator] Shuttle ${shuttleCode} received a command with an invalid format. Ignoring.`, command);
         }
     } catch (e) {
         console.error(`[Simulator] Failed to parse command for shuttle ${shuttleCode}:`, e);

@@ -1,11 +1,15 @@
 const { logger } = require('../logger/logger');
 const { asyncHandler } = require('../middlewares/error.middleware');
-const { findShortestPath } = require('../modules/SHUTTLE/pathfinding');
 const cellService = require('../modules/SHUTTLE/cellService');
-const shuttleTaskQueueService = require('../modules/SHUTTLE/shuttleTaskQueueService'); // New import
+const redisClient = require('../redis/init.redis'); // Import redis client
+
+const TASK_STAGING_QUEUE_KEY = 'task:staging_queue';
 
 class ShuttleController {
+
+    // Other methods (findPathSameFloor, etc.) remain unchanged for now
     findPathSameFloor = async (start, end, floor_id) => {
+        const { findShortestPath } = require('../modules/SHUTTLE/pathfinding');
         const listNode = await findShortestPath(start, end, floor_id);
 
         if (!listNode) {
@@ -27,82 +31,81 @@ class ShuttleController {
     });
 
     autoMode = asyncHandler(async (req, res) => {
-        const tasksToProcess = Array.isArray(req.body) ? req.body : [req.body];
-        console.log("=======================================================",tasksToProcess)
-        if (!tasksToProcess || tasksToProcess.length === 0) {
+        const requestsToProcess = Array.isArray(req.body) ? req.body : [req.body];
+        if (!requestsToProcess || requestsToProcess.length === 0) {
             return res.status(400).json({
                 success: false,
                 error: 'Missing task data in request body. Provide a task object or an array of task objects.'
             });
         }
 
-        const allRegisteredTasks = [];
-        for (const task of tasksToProcess) {
-            console.log('[Controller] Processing received task:', JSON.stringify(task));
-            const { pickupNode, floorId, listItem } = task;
-            
-            // Convert logical floorId to database floorId
-            const databaseFloorId = await cellService.getFloorIdByLogicalNumber(floorId);
-            if (databaseFloorId === null) {
-                return res.status(404).json({
-                    success: false,
-                    error: `Logical floor number '${floorId}' not found or invalid.`
-                });
-            }
-            const pickupNodeFloorId = databaseFloorId; // Use the converted ID
-            
-            if (!pickupNode || !listItem || !Array.isArray(listItem) || listItem.length === 0) {
-                return res.status(400).json({
-                    success: false,
-                    error: `Task missing required parameters (pickupNode, floorId, listItem as non-empty array) or invalid format. Task: ${JSON.stringify(task)}`
-                });
+        let preparedTasksCount = 0;
+        const stagingPromises = [];
+
+        for (const request of requestsToProcess) {
+            const { pickupNode, rack, floor, listItem } = request;
+
+            // Basic validation
+            if (!rack || !floor || !pickupNode || !listItem || !Array.isArray(listItem) || listItem.length === 0) {
+                logger.warn(`[Controller] Skipping invalid task request: ${JSON.stringify(request)}`);
+                continue;
             }
 
-            // ---- Start: Add validation for pickupNode existence ----
+            // More detailed validation (can be improved)
+            const floorInfo = await cellService.getFloorByRackAndFloorName(rack, floor);
+            if (!floorInfo) {
+                logger.warn(`[Controller] Floor '${floor}' not found in rack '${rack}'. Skipping request.`);
+                continue;
+            }
+            const pickupNodeFloorId = floorInfo.id;
+            
             const pickupCell = await cellService.getCellByName(pickupNode, pickupNodeFloorId);
             if (!pickupCell) {
-                return res.status(404).json({
-                    success: false,
-                    error: `Pickup node '${pickupNode}' not found on floor ${pickupNodeFloorId}.`   
-                });
-            }
-            // ---- End: Add validation ----
-
-            const endNodeCell = await cellService.findNextEmptyCellFIFO();
-
-            if (!endNodeCell) {
-                return res.status(404).json({
-                    success: false,
-                    error: `No available empty storage cell (end_node) found for task: ${JSON.stringify(task)}`
-                });
+                logger.warn(`[Controller] Pickup node '${pickupNode}' not found on floor ${pickupNodeFloorId}. Skipping request.`);
+                continue;
             }
 
-            const endNode = endNodeCell.qr_code;
-            logger.info(`[autoMode] Found end_node for pickupNode ${pickupNode} (Floor ${pickupNodeFloorId}): ${endNode}`);
-
-            // 2. Simulate external device signals (This part might be irrelevant for task creation)
-            logger.info(`[autoMode] Sending signal to external devices: Gập ray và mở cổng kho.`);
-
-            // 3. Register task to shuttle task queue for EACH item in listItem
+            // For each item in the request, create a separate task in the staging queue
             for (const item of listItem) {
-                const registrationResult = await shuttleTaskQueueService.registerTask({
+                logger.info(`[Controller] Staging item: "${item}" for pickupNode ${pickupNode}.Pushing to ${TASK_STAGING_QUEUE_KEY}.`);
+                const taskToStage = {
                     pickupNode,
-                    pickupNodeFloorId, 
-                    endNode,
+                    pickupNodeFloorId,
                     itemInfo: item,
-                    endNodeCol: endNodeCell.col, 
-                    endNodeRow: endNodeCell.row, 
-                    endNodeFloorId: endNodeCell.floor_id 
-                });
-                allRegisteredTasks.push(registrationResult);
+                };
+                
+                stagingPromises.push(
+                    redisClient.lPush(TASK_STAGING_QUEUE_KEY, JSON.stringify(taskToStage))
+                );
+                preparedTasksCount++;
             }
         }
 
-        return res.status(200).json({
-            success: true,
-            message: 'Auto mode tasks successfully registered and queued.',
-            data: allRegisteredTasks 
-        });
+        try {
+            const pushResults = await Promise.all(stagingPromises);
+            const successfulPushes = pushResults.filter(r => typeof r === 'number').length;
+            logger.info(`[Controller] Redis LPUSH command results: ${pushResults.join(', ')}`);
+            logger.info(`[Controller] Prepared ${preparedTasksCount} tasks, successfully pushed ${successfulPushes} tasks.`);
+
+            const currentQueueLength = await redisClient.lLen(TASK_STAGING_QUEUE_KEY);
+            logger.info(`[Controller] Verified queue length in Redis: ${currentQueueLength} tasks in ${TASK_STAGING_QUEUE_KEY}.`);
+
+            return res.status(202).json({
+                success: true,
+                message: 'Tasks have been accepted and are awaiting processing.',
+                data: {
+                    stagedTasksCount: successfulPushes,
+                    queueLength: currentQueueLength,
+                }
+            });
+
+        } catch (error) {
+            logger.error('[Controller] Error during staging tasks to Redis:', error);
+            return res.status(500).json({
+                success: false,
+                error: 'Failed to stage tasks due to a Redis error.'
+            });
+        }
     });
 }
 

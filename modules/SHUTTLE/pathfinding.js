@@ -1,11 +1,15 @@
 const cellService = require('./cellService');
 
-async function findShortestPath(startName, endName, floorId) {
-  const startCell = await cellService.getCellForPathfinding(startName, floorId);
-  const endCell = await cellService.getCellForPathfinding(endName, floorId);
+async function findShortestPath(startQrCode, endName, floorId) {
+  // The starting point is a QR code from the shuttle, the end point is a logical name from the task.
+  const startCell = await cellService.getCellByQrCode(startQrCode, floorId);
+  const endCell = await cellService.getCellByName(endName, floorId);
 
-  if (!startCell || !endCell) {
-    throw new Error('Cell not found');
+  if (!startCell) {
+    throw new Error(`Pathfinding start cell with QR code '${startQrCode}' not found on floor ${floorId}.`);
+  }
+  if (!endCell) {
+    throw new Error(`Pathfinding end cell with name '${endName}' not found on floor ${floorId}.`);
   }
 
   const pathCells = await findShortestPathByCellAsync(startCell, endCell, floorId);

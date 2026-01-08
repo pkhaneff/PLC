@@ -16,7 +16,7 @@ const shuttleStates = new Map();
  */  
 function updateShuttleState(shuttleCode, state) {
     logger.debug({
-        message: `Updating state for shuttle ${shuttleCode} in cache.`,
+        message: `Updating state for shuttle ${shuttleCode} in cache `,
         data: state
     });
     shuttleStates.set(shuttleCode, state);

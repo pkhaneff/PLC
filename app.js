@@ -10,12 +10,12 @@ const { plcsConfig } = require('./modules/PLC/configPLC');
 const healthController = require('./controllers/health.controller');
 const {logger} = require('./logger/logger.js')
 const shuttleDispatcherService = require('./modules/SHUTTLE/shuttleDispatcherService'); 
+const taskEventListener = require('./modules/SHUTTLE/taskEventListener');
 const { initializeMqttBroker } = require('./services/mqttService');
 
 const app = express();
 const server = http.createServer(app);
 const io = initializeSocket(server);
-
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
@@ -39,6 +39,8 @@ async function startServer() {
         const dispatcher = new shuttleDispatcherService(io);
 
         initializeMqttBroker(io);
+        taskEventListener.initialize(); // Initialize the task event listener
+        taskEventListener.setDispatcher(dispatcher); // Link dispatcher to listener
 
         server.listen(PORT, () => {
             logger.info(`Server is running on port ${PORT}!`)
