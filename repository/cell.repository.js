@@ -80,11 +80,11 @@ class CellRepository {
   async getCellByName(cellName, floorId) {
     const query = 'SELECT * FROM cells WHERE name = ? AND floor_id = ?;';
     try {
-        const [rows] = await pool.query(query, [cellName, floorId]);
-        return rows[0] || null;
+      const [rows] = await pool.query(query, [cellName, floorId]);
+      return rows[0] || null;
     } catch (error) {
-        logger.error(`[CellRepository] Error fetching cell by name ${cellName}:`, error);
-        throw error;
+      logger.error(`[CellRepository] Error fetching cell by name ${cellName}:`, error);
+      throw error;
     }
   }
 
@@ -102,11 +102,11 @@ class CellRepository {
   async getCellByQrCode(qrCode, floorId) {
     const query = 'SELECT * FROM cells WHERE qr_code = ? AND floor_id = ?;';
     try {
-        const [rows] = await pool.query(query, [qrCode, floorId]);
-        return rows[0] || null;
+      const [rows] = await pool.query(query, [qrCode, floorId]);
+      return rows[0] || null;
     } catch (error) {
-        logger.error(`[CellRepository] Error fetching cell by QR code ${qrCode}:`, error);
-        throw error;
+      logger.error(`[CellRepository] Error fetching cell by QR code ${qrCode}:`, error);
+      throw error;
     }
   }
 
@@ -156,11 +156,85 @@ class CellRepository {
         WHERE r.name = ? AND f.name = ?;
     `;
     try {
-        const [rows] = await pool.query(query, [rackName, floorName]);
-        return rows[0] || null;
+      const [rows] = await pool.query(query, [rackName, floorName]);
+      return rows[0] || null;
     } catch (error) {
-        logger.error(`[CellRepository] Error fetching floor by rack '${rackName}' and floor '${floorName}':`, error);
-        throw error;
+      logger.error(`[CellRepository] Error fetching floor by rack '${rackName}' and floor '${floorName}':`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get floor by ID with rack information
+   * @param {number} floorId - Floor ID
+   * @returns {Promise<object|null>} Floor with rack name
+   */
+  async getFloorById(floorId) {
+    const query = `
+      SELECT f.*, r.name as rack_name, r.id as rack_id
+      FROM rack_floors f
+      JOIN racks r ON f.rack_id = r.id
+      WHERE f.id = ?
+    `;
+    try {
+      const [rows] = await pool.query(query, [floorId]);
+      return rows[0] || null;
+    } catch (error) {
+      logger.error(`[CellRepository] Error fetching floor by ID ${floorId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Validate rack and floor relationship
+   * @param {number} rackId - Rack ID
+   * @param {number} floorId - Floor ID
+   * @returns {Promise<boolean>} True if valid
+   */
+  async getCellByCoordinate(col, row, floorId) {
+    const query = `
+      SELECT * FROM cells 
+      WHERE \`col\` = ? AND \`row\` = ? AND floor_id = ?
+      LIMIT 1;
+    `;
+    const [rows] = await pool.query(query, [col, row, floorId]);
+    return rows[0];
+  }
+
+  async validateRackFloor(rackId, floorId) {
+    const query = `
+      SELECT id FROM rack_floors
+      WHERE id = ? AND rack_id = ?
+    `;
+    try {
+      const [rows] = await pool.query(query, [floorId, rackId]);
+      return rows.length > 0;
+    } catch (error) {
+      logger.error(`[CellRepository] Error validating rack ${rackId} and floor ${floorId}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get cell with rack and floor names for logging
+   * @param {string} qrCode - QR code
+   * @param {number} floorId - Floor ID
+   * @returns {Promise<object|null>} Cell with names
+   */
+  async getCellWithNames(qrCode, floorId) {
+    const query = `
+      SELECT c.*, f.name as floor_name, r.name as rack_name
+      FROM cells c
+      JOIN rack_floors f ON c.floor_id = f.id
+      JOIN racks r ON f.rack_id = r.id
+      WHERE c.qr_code = ? AND c.floor_id = ?
+    `;
+    try {
+      const [rows] = await pool.query(query, [qrCode, floorId]);
+      return rows[0] || null;
+    } catch (error) {
+      logger.error(`[CellRepository] Error fetching cell with names for QR ${qrCode}:`, error);
+      throw error;
     }
   }
 }

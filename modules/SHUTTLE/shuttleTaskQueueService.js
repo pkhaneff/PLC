@@ -46,16 +46,21 @@ class ShuttleTaskQueueService {
    * @param {Object} taskData - Dữ liệu của tác vụ (pickupNode, pickupNodeFloorId, endNode, itemInfo (array), priority, etc.)
    * @returns {Object} { taskId, position, timestamp }
    */
+  /**
+   * Đăng ký một tác vụ shuttle mới
+   * @param {Object} taskData - Dữ liệu của tác vụ (pickupNodeQr, pickupNodeFloorId, endNodeQr, itemInfo (array), priority, etc.)
+   * @returns {Object} { taskId, position, timestamp }
+   */
   async registerTask(taskData) {
     const taskId = this.generateTaskId();
     const timestamp = Date.now();
-    logger.debug('[TaskQueueService] Registering task with data:', JSON.stringify(taskData)); // DEBUG LOG POINT 2 - Force stringify
+    logger.debug('[TaskQueueService] Registering task with data:', JSON.stringify(taskData));
 
     try {
-      // Đảm bảo các trường cần thiết có mặt
-      const { pickupNode, pickupNodeFloorId, endNode } = taskData;
-      if (!pickupNode || !pickupNodeFloorId || !endNode) {
-        throw new Error('Shuttle task must have pickupNode, pickupNodeFloorId, and endNode');
+      // Đảm bảo các trường cần thiết có mặt (Updated for QR codes)
+      const { pickupNodeQr, pickupNodeFloorId, endNodeQr } = taskData;
+      if (!pickupNodeQr || !pickupNodeFloorId || !endNodeQr) {
+        throw new Error('Shuttle task must have pickupNodeQr, pickupNodeFloorId, and endNodeQr');
       }
 
       // 1. Lưu chi tiết task vào Hash
@@ -70,16 +75,15 @@ class ShuttleTaskQueueService {
       if (fullTaskDetails.itemInfo && (typeof fullTaskDetails.itemInfo === 'object' || Array.isArray(fullTaskDetails.itemInfo))) {
         fullTaskDetails.itemInfo = JSON.stringify(fullTaskDetails.itemInfo);
       }
-      // externalSignalData is no longer expected
 
       await redisClient.hSet(this.getTaskKey(taskId), fullTaskDetails);
 
       // 2. Thêm task vào hàng đợi tổng (Sorted Set với score = timestamp)
       const globalQueueData = {
         taskId,
-        pickupNode,
+        pickupNodeQr,
         pickupNodeFloorId, // Include floor ID in global queue data
-        endNode,
+        endNodeQr,
         timestamp,
         priority: taskData.priority || 0 // Default priority
       };
@@ -95,7 +99,7 @@ class ShuttleTaskQueueService {
         JSON.stringify(globalQueueData)
       );
 
-      console.log(`✓ Shuttle Task ${taskId} registered: ${pickupNode} → ${endNode}, Position: ${position + 1}`);
+      console.log(`✓ Shuttle Task ${taskId} registered: ${pickupNodeQr} → ${endNodeQr}, Position: ${position + 1}`);
 
       return {
         taskId,
@@ -127,90 +131,20 @@ class ShuttleTaskQueueService {
 
       // Chỉ trả về nếu trạng thái là 'pending'
       if (taskDetails && taskDetails.status === 'pending') {
-         // Chuyển đổi lại itemInfo thành object/array
+        // Chuyển đổi lại itemInfo thành object/array
         if (taskDetails.itemInfo && typeof taskDetails.itemInfo === 'string') {
-            try { taskDetails.itemInfo = JSON.parse(taskDetails.itemInfo); } catch (e) { /* ignore */ }
+          try { taskDetails.itemInfo = JSON.parse(taskDetails.itemInfo); } catch (e) { /* ignore */ }
         }
         return {
-            ...taskSummary,
-            ...taskDetails
+          ...taskSummary,
+          ...taskDetails
         };
       } else {
-        // Nếu task đầu tiên không pending (đã assigned/in_progress nhưng chưa xóa khỏi global_task_queue),
-        // chúng ta sẽ cần một cơ chế để bỏ qua nó hoặc xóa nó nếu nó đã được xử lý xong
-        // Tạm thời, để đơn giản, chỉ lấy task pending
-        // Cần xem xét lại: nếu task đầu tiên không pending, có thể có các task pending khác phía sau
-        // Một cách tốt hơn là duyệt qua một vài task đầu tiên hoặc chỉ lấy những task có status pending trong sorted set.
-        // Tuy nhiên, Redis sorted set không hỗ trợ query theo field của member JSON string.
-        // Tạm thời, tôi sẽ để như vậy, và hệ thống điều phối sẽ chỉ lấy task pending từ đây.
-        // Nếu task đầu tiên không pending, nó sẽ cần tìm task pending tiếp theo.
-        // Để giải quyết triệt để, có thể phải dùng thêm một Sorted Set khác chỉ chứa pending tasks.
-        // Hoặc khi markTaskAsAssigned, remove nó khỏi global_task_queue, chỉ giữ task ID trong processing_tasks
-        return null; // Tạm thời, nếu task đầu tiên không pending, coi như không có task pending
+        return null;
       }
 
     } catch (error) {
       console.error('Error getting next pending shuttle task:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Cập nhật trạng thái của một tác vụ
-   * @param {string} taskId - ID của task
-   * @param {string} status - Trạng thái mới ('assigned', 'in_progress', 'completed', 'failed')
-   * @param {string} assignedShuttleId - (Optional) ID của shuttle được giao task
-   * @returns {boolean} Success
-   */
-  async updateTaskStatus(taskId, status, assignedShuttleId = null) {
-    try {
-      const taskKey = this.getTaskKey(taskId);
-      const updates = { status, lastUpdated: Date.now() };
-      if (assignedShuttleId) {
-        updates.assignedShuttleId = assignedShuttleId;
-      }
-      await redisClient.hSet(taskKey, updates);
-
-      if (status === 'assigned') {
-        // Add to the set of tasks currently being processed
-        await redisClient.sAdd(this.PROCESSING_TASKS_KEY, taskId);
-
-        // IMPORTANT: Remove from the main pending queue to unblock the dispatcher.
-        const taskDetails = await redisClient.hGetAll(taskKey);
-        if (taskDetails && taskDetails.timestamp) {
-          const globalQueueData = {
-            taskId: taskDetails.taskId,
-            pickupNode: taskDetails.pickupNode,
-            pickupNodeFloorId: parseInt(taskDetails.pickupNodeFloorId, 10), // CRITICAL: Convert to number
-            endNode: taskDetails.endNode,
-            timestamp: parseInt(taskDetails.timestamp, 10),
-            priority: parseInt(taskDetails.priority, 10) || 0,
-          };
-          const valueToRemove = JSON.stringify(globalQueueData);
-          const removeResult = await redisClient.zRem(this.GLOBAL_TASK_QUEUE_KEY, valueToRemove);
-          if (removeResult > 0) {
-            logger.info(`[TaskQueueService] Removed task ${taskId} from global pending queue.`);
-          } else {
-            logger.warn(`[TaskQueueService] Failed to remove task ${taskId} from global pending queue. JSON may not match.`);
-          }
-        }
-
-      } else if (status === 'completed') {
-        // On completion, remove from processing set AND delete the task hash
-        await redisClient.sRem(this.PROCESSING_TASKS_KEY, taskId);
-        await redisClient.del(taskKey);
-        logger.info(`[TaskQueueService] Task ${taskId} completed and cleared from Redis.`);
-
-      } else if (status === 'failed') {
-        // On failure, only remove from the processing set, leaving the hash for inspection
-        await redisClient.sRem(this.PROCESSING_TASKS_KEY, taskId);
-        logger.warn(`[TaskQueueService] Task ${taskId} failed. Left details in Redis for inspection.`);
-      }
-
-      logger.info(`✓ Shuttle Task ${taskId} status updated to: ${status}`);
-      return true;
-    } catch (error) {
-      logger.error(`Error updating shuttle task ${taskId} status to ${status}:`, error);
       throw error;
     }
   }
@@ -243,10 +177,10 @@ class ShuttleTaskQueueService {
         const taskDetails = await this.getTaskDetails(taskSummary.taskId);
         // Chuyển đổi lại itemInfo và externalSignalData thành object
         if (taskDetails && taskDetails.itemInfo && typeof taskDetails.itemInfo === 'string') {
-            try { taskDetails.itemInfo = JSON.parse(taskDetails.itemInfo); } catch (e) { /* ignore */ }
+          try { taskDetails.itemInfo = JSON.parse(taskDetails.itemInfo); } catch (e) { /* ignore */ }
         }
         if (taskDetails && taskDetails.externalSignalData && typeof taskDetails.externalSignalData === 'string') {
-            try { taskDetails.externalSignalData = JSON.parse(taskDetails.externalSignalData); } catch (e) { /* ignore */ }
+          try { taskDetails.externalSignalData = JSON.parse(taskDetails.externalSignalData); } catch (e) { /* ignore */ }
         }
         return { ...taskSummary, ...taskDetails };
       }));
@@ -269,7 +203,7 @@ class ShuttleTaskQueueService {
       if (Object.keys(details).length > 0) {
         // Chuyển đổi lại itemInfo thành object/array
         if (details.itemInfo && typeof details.itemInfo === 'string') {
-            try { details.itemInfo = JSON.parse(details.itemInfo); } catch (e) { /* ignore */ }
+          try { details.itemInfo = JSON.parse(details.itemInfo); } catch (e) { /* ignore */ }
         }
         return details;
       }
@@ -294,6 +228,66 @@ class ShuttleTaskQueueService {
   }
 
   /**
+   * Cập nhật trạng thái của một tác vụ
+   * @param {string} taskId - ID của task
+   * @param {string} status - Trạng thái mới ('assigned', 'in_progress', 'completed', 'failed')
+   * @param {string} assignedShuttleId - (Optional) ID của shuttle được giao task
+   * @returns {boolean} Success
+   */
+  async updateTaskStatus(taskId, status, assignedShuttleId = null) {
+    try {
+      const taskKey = this.getTaskKey(taskId);
+      const updates = { status, lastUpdated: Date.now() };
+      if (assignedShuttleId) {
+        updates.assignedShuttleId = assignedShuttleId;
+      }
+      await redisClient.hSet(taskKey, updates);
+
+      if (status === 'assigned') {
+        // Add to the set of tasks currently being processed
+        await redisClient.sAdd(this.PROCESSING_TASKS_KEY, taskId);
+
+        // IMPORTANT: Remove from the main pending queue to unblock the dispatcher.
+        const taskDetails = await redisClient.hGetAll(taskKey);
+        if (taskDetails && taskDetails.timestamp) {
+          const globalQueueData = {
+            taskId: taskDetails.taskId,
+            pickupNodeQr: taskDetails.pickupNodeQr,
+            pickupNodeFloorId: parseInt(taskDetails.pickupNodeFloorId, 10), // CRITICAL: Convert to number
+            endNodeQr: taskDetails.endNodeQr,
+            timestamp: parseInt(taskDetails.timestamp, 10),
+            priority: parseInt(taskDetails.priority, 10) || 0,
+          };
+          const valueToRemove = JSON.stringify(globalQueueData);
+          const removeResult = await redisClient.zRem(this.GLOBAL_TASK_QUEUE_KEY, valueToRemove);
+          if (removeResult > 0) {
+            logger.info(`[TaskQueueService] Removed task ${taskId} from global pending queue.`);
+          } else {
+            logger.warn(`[TaskQueueService] Failed to remove task ${taskId} from global pending queue. JSON may not match.`);
+          }
+        }
+
+      } else if (status === 'completed') {
+        await redisClient.sRem(this.PROCESSING_TASKS_KEY, taskId);
+        await redisClient.del(taskKey);
+        logger.info(`[TaskQueueService] Task ${taskId} completed and cleared from Redis.`);
+
+      } else if (status === 'failed') {
+        await redisClient.sRem(this.PROCESSING_TASKS_KEY, taskId);
+        logger.warn(`[TaskQueueService] Task ${taskId} failed. Left details in Redis for inspection.`);
+      }
+
+      logger.info(`✓ Shuttle Task ${taskId} status updated to: ${status}`);
+      return true;
+    } catch (error) {
+      logger.error(`Error updating shuttle task ${taskId} status to ${status}:`, error);
+      throw error;
+    }
+  }
+
+  // ...
+
+  /**
    * Xóa một task khỏi tất cả các hàng đợi và chi tiết
    * Chỉ nên gọi khi task đã hoàn thành hoặc thất bại và không cần lưu trữ nữa
    * @param {string} taskId - ID của nhiệm vụ
@@ -307,23 +301,13 @@ class ShuttleTaskQueueService {
       // Lấy thông tin task để xóa khỏi global_task_queue (cần JSON string gốc)
       const taskDetails = await this.getTaskDetails(taskId);
       if (taskDetails) {
-        // Un-reserve the cell associated with this task
-        if (taskDetails.endNode && taskDetails.endNodeFloorId) {
-          const cell = await cellService.getCellByQrCode(taskDetails.endNode, taskDetails.endNodeFloorId);
-          if (cell) {
-            // Note: In the new architecture, endNode reservation is a Redis lock, not a DB field.
-            // This unreserveCell call (which updates DB) might be obsolete or need re-evaluation.
-            // For now, removing it as it conflicts with the 'DB only reflects reality' principle.
-            // await cellService.unreserveCell(cell.id);
-            logger.info(`[TaskQueueService] Not attempting to unreserve DB cell ${cell.id} for removed task ${taskId} (logic moved to ReservationService).`);
-          }
-        }
+        // Un-reserve logic removed as per original file...
 
         const globalQueueData = {
           taskId: taskDetails.taskId,
-          pickupNode: taskDetails.pickupNode,
+          pickupNodeQr: taskDetails.pickupNodeQr,
           pickupNodeFloorId: parseInt(taskDetails.pickupNodeFloorId, 10), // Convert to number
-          endNode: taskDetails.endNode,
+          endNodeQr: taskDetails.endNodeQr,
           timestamp: parseInt(taskDetails.timestamp, 10), // Convert to number
           priority: parseInt(taskDetails.priority, 10) || 0
         };

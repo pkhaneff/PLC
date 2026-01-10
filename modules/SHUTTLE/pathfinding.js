@@ -1,21 +1,6 @@
 const cellService = require('./cellService');
 
-async function findShortestPath(startQrCode, endName, floorId) {
-  // The starting point is a QR code from the shuttle, the end point is a logical name from the task.
-  const startCell = await cellService.getCellByQrCode(startQrCode, floorId);
-  const endCell = await cellService.getCellByName(endName, floorId);
-
-  if (!startCell) {
-    throw new Error(`Pathfinding start cell with QR code '${startQrCode}' not found on floor ${floorId}.`);
-  }
-  if (!endCell) {
-    throw new Error(`Pathfinding end cell with name '${endName}' not found on floor ${floorId}.`);
-  }
-
-  const pathCells = await findShortestPathByCellAsync(startCell, endCell, floorId);
-
-  return convertPathToStepFormat(pathCells);
-}
+// Old findShortestPath removed. New implementation finds path between two QR codes.
 
 function convertPathToStepFormat(pathCells) {
   if (!pathCells || pathCells.length === 0) {
@@ -34,7 +19,7 @@ function convertPathToStepFormat(pathCells) {
       direction = calculateDirection(prevCell, cell);
     }
 
-    result[`step${index + 1}`] = `${cell.name}>${direction}`;
+    result[`step${index + 1}`] = `${cell.qr_code}>${direction}`;
   });
 
   return result;
@@ -52,24 +37,39 @@ function calculateDirection(fromCell, toCell) {
   return 1;
 }
 
-async function findShortestPathByCellAsync(startCell, endCell, floorId) {
+async function findShortestPathByCellAsync(startCell, endCell, floorId, options = {}) {
   const queue = [[startCell, [startCell]]];
-  const visited = new Set([startCell.name]);
+  const visited = new Set([startCell.qr_code]);
+
+  // Build set of nodes to avoid
+  const avoidSet = new Set();
+  if (options.avoid) {
+    options.avoid.forEach(qr => avoidSet.add(qr));
+  }
+  if (options.avoidNames) {
+    options.avoidNames.forEach(name => avoidSet.add(name));
+  }
 
   while (queue.length > 0) {
     const [currentCell, path] = queue.shift();
 
-    if (currentCell.name === endCell.name) {
+    if (currentCell.qr_code === endCell.qr_code) {
       return path;
     }
 
     const neighbors = await getValidNeighborsFromDB(currentCell, floorId);
 
     for (const neighbor of neighbors) {
-      if (!visited.has(neighbor.name)) {
-        visited.add(neighbor.name);
-        queue.push([neighbor, [...path, neighbor]]);
+      // Skip if already visited (use qr_code for visited tracking)
+      if (visited.has(neighbor.qr_code)) continue;
+
+      // Skip if in avoid list (check both name and qr_code for backward compatibility)
+      if (avoidSet.has(neighbor.name) || avoidSet.has(neighbor.qr_code)) {
+        continue;
       }
+
+      visited.add(neighbor.qr_code);
+      queue.push([neighbor, [...path, neighbor]]);
     }
   }
 
@@ -141,9 +141,63 @@ function getOppositeDirection(direction) {
   return opposites[direction];
 }
 
+/**
+ * Find shortest path between two QR codes (both start and end are QR codes).
+ * This is the primary pathfinding function.
+ * 
+ * @param {string} startQrCode - Starting QR code
+ * @param {string} endQrCode - Ending QR code
+ * @param {number} floorId - Floor ID
+ * @param {object} options - Pathfinding options (avoid, avoidNames)
+ * @returns {Promise<object|null>} Path object or null
+ */
+async function findShortestPath(startQrCode, endQrCode, floorId, options = {}) {
+  const startCell = await cellService.getCellByQrCode(startQrCode, floorId);
+  const endCell = await cellService.getCellByQrCode(endQrCode, floorId);
+
+  if (!startCell) {
+    throw new Error(`Pathfinding start cell with QR code '${startQrCode}' not found on floor ${floorId}.`);
+  }
+  if (!endCell) {
+    throw new Error(`Pathfinding end cell with QR code '${endQrCode}' not found on floor ${floorId}.`);
+  }
+
+  const pathCells = await findShortestPathByCellAsync(startCell, endCell, floorId, options);
+
+  return convertPathToStepFormat(pathCells);
+}
+
+/**
+ * Legacy: Find shortest path where start is QR code and end is Name.
+ * @deprecated Use findShortestPath with QR codes instead.
+ */
+async function findShortestPathLegacy(startQrCode, endName, floorId, options = {}) {
+  const startCell = await cellService.getCellByQrCode(startQrCode, floorId);
+  const endCell = await cellService.getCellByName(endName, floorId);
+
+  if (!startCell) {
+    throw new Error(`Pathfinding start cell with QR code '${startQrCode}' not found on floor ${floorId}.`);
+  }
+  if (!endCell) {
+    throw new Error(`Pathfinding end cell with name '${endName}' not found on floor ${floorId}.`);
+  }
+
+  const pathCells = await findShortestPathByCellAsync(startCell, endCell, floorId, options);
+
+  return convertPathToStepFormat(pathCells);
+}
+
+// ... helper functions ...
+
+async function findShortestPathByQrCode(startQrCode, endQrCode, floorId, options = {}) {
+  return findShortestPath(startQrCode, endQrCode, floorId, options);
+}
+
 
 module.exports = {
   findShortestPath,
+  findShortestPathLegacy,
+  findShortestPathByQrCode, // Export for backward compatibility
   convertPathToStepFormat,
   parseDirectionType,
   getValidNeighborsFromDB

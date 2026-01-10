@@ -2,16 +2,16 @@ const mqtt = require('mqtt');
 
 // --- Config ---
 const MQTT_BROKER_URL = 'mqtt://localhost:1883';
-const LOOP_INTERVAL = 500; 
+const LOOP_INTERVAL = 500;
 const NODE_TRAVEL_TIME_MS = 1500;
 const COMMAND_TOPIC = 'shuttle/command/+';
 const INFO_TOPIC_PREFIX = 'shuttle/information/';
-const EVENTS_TOPIC = 'shuttle/events'; 
+const EVENTS_TOPIC = 'shuttle/events';
 
 const SHUTTLE_CONFIGS = [
-    { code: '001', ip: '192.168.1.101', startQrCode: 'X0002Y0001' },
-    { code: '002', ip: '192.168.1.102', startQrCode: 'X0003Y0001' }, 
-    { code: '003', ip: '192.168.1.103', startQrCode: 'X0002Y0020' },
+    { code: '001', ip: '192.168.1.101', startQrCode: 'X0002Y0020' },
+    // { code: '002', ip: '192.168.1.102', startQrCode: 'X0003Y0001' }, 
+    { code: '003', ip: '192.168.1.103', startQrCode: 'X0003Y0020' },
 ];
 
 // --- Enums ---
@@ -29,7 +29,7 @@ let shuttleStates = SHUTTLE_CONFIGS.map(config => ({
     ip: config.ip,
     shuttleStatus: SHUTTLE_STATUS.IDLE,
     commandComplete: COMMAND_COMPLETE.DONE,
-    qrCode: config.startQrCode, 
+    qrCode: config.startQrCode,
     path: [],
     currentPathIndex: 0,
     lastMoveTimestamp: 0,
@@ -79,7 +79,7 @@ function processMovement(state) {
     if (nextNodeIndex >= state.path.length) {
         const arrivalEvent = state.onArrival;
         console.log(`[Simulator] Shuttle ${state.no} completed its path at ${state.qrCode}. Firing event: ${arrivalEvent}`);
-        
+
         if (arrivalEvent) {
             publishEvent(arrivalEvent, state.no, { taskId: state.taskInfo.taskId });
         } else {
@@ -98,43 +98,55 @@ function processMovement(state) {
     const nextNode = state.path[nextNodeIndex];
 
     // --- Conflict Detection ---
-    const isNodeOccupied = shuttleStates.some(
+    const blockingShuttle = shuttleStates.find(
         otherShuttle => otherShuttle.no !== state.no && otherShuttle.qrCode === nextNode
     );
 
-    if (isNodeOccupied) {
+    if (blockingShuttle) {
         if (state.shuttleStatus !== SHUTTLE_STATUS.WAITING) { // Only publish if status changes to WAITING
             state.shuttleStatus = SHUTTLE_STATUS.WAITING;
-            console.log(`[Simulator] Shuttle ${state.no} is WAITING. Node ${nextNode} is occupied.`);
-            publishEvent('shuttle-waiting', state.no, { waitingAt: state.qrCode, targetNode: nextNode });
+            console.log(`[Simulator] Shuttle ${state.no} is WAITING. Node ${nextNode} is occupied by shuttle ${blockingShuttle.no}.`);
+            publishEvent('shuttle-waiting', state.no, {
+                waitingAt: state.qrCode,
+                targetNode: nextNode,
+                blockedBy: blockingShuttle.no
+            });
+            console.log(`[Simulator] Published event shuttle-waiting for ${state.no}`);
         }
         return; // Halt movement
     }
-    
+
     // If we were waiting but the node is now free, resume normal speed
     if (state.shuttleStatus === SHUTTLE_STATUS.WAITING) {
         console.log(`[Simulator] Shuttle ${state.no} resumes movement. Node ${nextNode} is now free.`);
         publishEvent('shuttle-resumed', state.no, { resumedFrom: state.qrCode, targetNode: nextNode });
     }
     state.shuttleStatus = SHUTTLE_STATUS.NORMAL_SPEED;
-    
-    // It's time to move
+
+    // It's time to move - save previous node before updating
+    const previousNode = state.qrCode;
     state.currentPathIndex = nextNodeIndex;
     state.lastMoveTimestamp = now;
     state.qrCode = nextNode;
-    console.log(`[Simulator] Shuttle ${state.no} moved to node: ${nextNode}`);
-    publishEvent('shuttle-moved', state.no, { currentNode: state.qrCode });
+    console.log(`[Simulator] Shuttle ${state.no} moved from ${previousNode} to ${nextNode}`);
+    publishEvent('shuttle-moved', state.no, { currentNode: state.qrCode, previousNode: previousNode });
 }
 
 // --- Main Logic ---
 
 client.on('connect', () => {
     console.log(`[Simulator] Connected. Initializing ${SHUTTLE_CONFIGS.length} agents. Travel time is ${NODE_TRAVEL_TIME_MS / 1000}s/node.`);
-    
+
     client.subscribe(COMMAND_TOPIC, (err) => {
         if (!err) {
             console.log(`[Simulator] Subscribed to command topic: ${COMMAND_TOPIC}`);
         }
+    });
+
+    // Publish shuttle-initialized event for each shuttle to block initial nodes
+    shuttleStates.forEach(state => {
+        publishEvent('shuttle-initialized', state.no, { initialNode: state.qrCode });
+        console.log(`[Simulator] Shuttle ${state.no} initialized at node ${state.qrCode}`);
     });
 
     // Main loop for processing movement and publishing state
@@ -157,7 +169,7 @@ client.on('message', (topic, message) => {
         console.warn(`[Simulator] Received command for unknown shuttle: ${shuttleCode}`);
         return;
     }
-    
+
     // Do not accept new paths if already running
     if (shuttle.shuttleStatus !== SHUTTLE_STATUS.IDLE) {
         console.log(`[Simulator] Shuttle ${shuttleCode} is busy, ignoring new path.`);
@@ -170,27 +182,27 @@ client.on('message', (topic, message) => {
         // Check if it's the expected command object format
         if (command && command.path && command.onArrival) {
             const pathObject = command.path;
-            
-            // Convert the path object to a simple array of node names
+
+            // Convert the path object to a simple array of QR codes
             const newPath = [];
             for (let i = 1; i <= pathObject.totalStep; i++) {
                 const step = pathObject[`step${i}`];
                 if (step) {
-                    const nodeName = step.split('>')[0];
-                    newPath.push(nodeName);
+                    const nodeQr = step.split('>')[0];
+                    newPath.push(nodeQr);
                 }
             }
 
             if (newPath.length > 0) {
                 console.log(`[Simulator] Shuttle ${shuttleCode} received new task. Path: [${newPath.join(', ')}]. Event on arrival: ${command.onArrival}`);
                 publishEvent('shuttle-task-started', shuttle.no, { pathLength: newPath.length, startNode: newPath[0] });
-                
+
                 shuttle.path = newPath;
                 shuttle.onArrival = command.onArrival;
                 shuttle.taskInfo = command.taskInfo;
                 shuttle.currentPathIndex = 0;
                 // The first node in the path is the current location
-                shuttle.qrCode = newPath[0]; 
+                shuttle.qrCode = newPath[0];
                 shuttle.shuttleStatus = SHUTTLE_STATUS.NORMAL_SPEED;
                 shuttle.commandComplete = COMMAND_COMPLETE.IN_PROGRESS;
                 shuttle.lastMoveTimestamp = Date.now(); // Start timer immediately

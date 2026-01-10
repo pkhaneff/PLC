@@ -82,7 +82,7 @@ class ShuttleService {
    * Replaces DB update for status and waiting_since.
    * @param {string} shuttleId - The ID of the shuttle.
    * @param {number} waitingSinceTimestamp - Timestamp when waiting started.
-   * @param {number} [timeoutDuration] - Optional duration for the waiting state.
+   * @param {number} [timeoutDuration]
    */
   async setShuttleWaiting(shuttleId, waitingSinceTimestamp, timeoutDuration = null) {
     updateShuttleState(shuttleId, { shuttleStatus: 'waiting', waitingSince: waitingSinceTimestamp });
@@ -91,10 +91,7 @@ class ShuttleService {
       // Example: Schedule a follow-up action after timeoutDuration
       setTimeout(() => {
         console.log(`[ShuttleService] Shuttle ${shuttleId} waiting timeout reached.`);
-        // Potentially call clearShuttleWaiting or another handler
-        // This would require a mechanism to cancel the timer if needed.
-        // For now, it's a basic example.
-        this.clearShuttleWaiting(shuttleId); // Example: auto-resume if timeout
+        this.clearShuttleWaiting(shuttleId);
       }, timeoutDuration);
     }
     // Note: Specific logic for how long to wait and what to do next will depend on higher-level services.

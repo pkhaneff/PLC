@@ -20,14 +20,14 @@ class ShuttleDispatcherService {
   // Considers floor changes as a significant penalty
   async calculateDistanceHeuristic(coords1, coords2) {
     if (!coords1 || !coords2) {
-      return Infinity; 
+      return Infinity;
     }
 
     const { col: col1, row: row1, floor_id: floor1 } = coords1;
     const { col: col2, row: row2, floor_id: floor2 } = coords2;
 
     if (floor1 !== floor2) {
-      return Infinity; 
+      return Infinity;
     }
 
     return Math.abs(col1 - col2) + Math.abs(row1 - row2);
@@ -43,18 +43,18 @@ class ShuttleDispatcherService {
     let taskPickupCoords = null;
 
     try {
-      // Get coordinates for the task's pickup node on the specified floor
-      taskPickupCoords = await cellService.getCellByName(task.pickupNode, task.pickupNodeFloorId);
+      // Get coordinates for the task's pickup node (now using QR)
+      taskPickupCoords = await cellService.getCellByQrCode(task.pickupNodeQr, task.pickupNodeFloorId);
       if (!taskPickupCoords) {
-        logger.warn(`Task pickupNode ${task.pickupNode} on floor ${task.pickupNodeFloorId} not found in cellService.`);
+        logger.warn(`Task pickupNodeQr ${task.pickupNodeQr} on floor ${task.pickupNodeFloorId} not found in cellService.`);
         return null;
       }
 
       for (const shuttle of idleShuttles) {
         let shuttleCurrentCoords = null;
-        // CORRECTED: Use getCellByQrCode since shuttle.current_node is a QR code
+        // Use getCellByQrCode since shuttle.current_node is a QR code
         shuttleCurrentCoords = await cellService.getCellByQrCode(shuttle.current_node, taskPickupCoords.floor_id);
-          
+
         if (!shuttleCurrentCoords) {
           logger.warn(`Shuttle ${shuttle.id} current_node (QR: ${shuttle.current_node}) not found on floor ${taskPickupCoords.floor_id} in cellService.`);
           continue; // Skip this shuttle
@@ -64,7 +64,10 @@ class ShuttleDispatcherService {
 
         if (distance < minDistance) {
           minDistance = distance;
-          optimalShuttle = shuttle;
+          optimalShuttle = {
+            ...shuttle,
+            qrCode: shuttle.current_node // Ensure qrCode property is set
+          };
         }
       }
     } catch (error) {
@@ -85,101 +88,121 @@ class ShuttleDispatcherService {
       // 1. Get the next pending task (FIFO)
       task = await shuttleTaskQueueService.getNextPendingTask();
       if (!task) {
-        logger.info('[ShuttleDispatcherService] No pending tasks found.');
+        logger.debug('[ShuttleDispatcherService] No pending tasks found.');
         return; // No pending tasks
       }
       logger.info(`[ShuttleDispatcherService] Found pending task: ${task.taskId}`);
 
       // 2. Attempt to lock the pickupNode, or verify we already own the lock
-      pickupResourceKey = `pickup:lock:${task.pickupNode}`;
+      // Use pickupNodeQr
+      pickupResourceKey = `pickup:lock:${task.pickupNodeQr}`;
       let isLockAcquired = await ReservationService.acquireLock(pickupResourceKey, task.taskId, PICKUP_LOCK_TIMEOUT);
 
       if (!isLockAcquired) {
         // If lock failed, check if we are already the owner
         const currentOwner = await ReservationService.getLockOwner(pickupResourceKey);
         if (currentOwner === task.taskId) {
-          logger.info(`[Dispatcher] Verified that current task ${task.taskId} already owns the lock for ${task.pickupNode}. Proceeding.`);
-          isLockAcquired = true; // We can proceed
+          isLockAcquired = true;
+          logger.info(`[ShuttleDispatcherService] Task ${task.taskId} already owns lock for ${pickupResourceKey}. Proceeding.`);
         } else {
-          logger.info(`[Dispatcher] Pickup node ${task.pickupNode} is locked by another task (${currentOwner}). Task ${task.taskId} will be retried.`);
-          return; // Locked by someone else, so we wait.
+          logger.warn(`[ShuttleDispatcherService] Pickup node ${task.pickupNodeQr} is locked by ${currentOwner}. Skipping task ${task.taskId} temporarily.`);
+          // Should we unshift the task or just retry later?
+          // Since getNextPendingTask peeks at the top, we are stuck on this task until it can be processed.
+          // This simple FIFO logic means we block until the lock is free.
+          return;
         }
       }
 
-      // 3. Validate pickup node. This is a critical failure if it fails.
-      const pickupCell = await cellService.getCellByName(task.pickupNode, task.pickupNodeFloorId);
-      if (!pickupCell) {
-        logger.error(`[Dispatcher] UNRECOVERABLE: Pickup node ${task.pickupNode} not found for task ${task.taskId}. Removing task and releasing lock.`);
-        await shuttleTaskQueueService.removeTask(task.taskId); // Clean up bad task
-        await ReservationService.releaseLock(pickupResourceKey); // Release lock as task is invalid
+      // 3. Find optimal shuttle
+      const allShuttleStates = getAllShuttleStates(); // This is synchronous and fast
+      logger.info(`[DispatcherDebug] All states: ${JSON.stringify(allShuttleStates)}`);
+
+      const idleShuttles = Object.values(allShuttleStates)
+        .filter(s => s.shuttleStatus === 8) // 8 = IDLE
+        .map(s => ({
+          ...s,
+          id: s.no || s.id, // Ensure ID is present
+          current_node: s.qrCode // Map qrCode to current_node for consistency
+        }));
+
+      logger.info(`[DispatcherDebug] Idle shuttles found: ${idleShuttles.length}`);
+
+      if (idleShuttles.length === 0) {
+        logger.debug('[ShuttleDispatcherService] No idle shuttles available.');
         return;
       }
 
-      // 4. Find available shuttles
-      const allShuttles = getAllShuttleStates();
-      const idleShuttles = allShuttles
-        .filter(s => s.shuttleStatus === 8) // 8 = IDLE
-        .map(s => ({ ...s, id: s.no, current_node: s.qrCode }));
-
-      if (!idleShuttles || idleShuttles.length === 0) {
-        logger.warn(`No idle shuttles available. Task ${task.taskId} will be retried. The pickupNode lock is HELD.`);
-        return; // Lock is held, just exit and retry next cycle
-      }
-
-      // 5. Select the optimal shuttle
       const optimalShuttle = await this.findOptimalShuttle(task, idleShuttles);
+      logger.info(`[DispatcherDebug] Optimal shuttle: ${optimalShuttle ? optimalShuttle.id : 'null'}`);
+
       if (!optimalShuttle) {
-        logger.warn(`No optimal shuttle found for task ${task.taskId}. Task will be retried. The pickupNode lock is HELD.`);
-        return; // Lock is held, just exit and retry next cycle
-      }
-      
-      // 6. Determine shuttle's current floor by looking up its current QR code
-      const shuttleCurrentCell = await cellService.getCellByQrCodeAnyFloor(optimalShuttle.current_node);
-      if (!shuttleCurrentCell || shuttleCurrentCell.length === 0) {
-        logger.error(`[Dispatcher] Shuttle ${optimalShuttle.id} current position ${optimalShuttle.current_node} not found in database. Task ${task.taskId} will be retried. The pickupNode lock is HELD.`);
-        return; // Lock is held, just exit and retry next cycle
+        logger.info('[ShuttleDispatcherService] No suitable shuttle found (e.g., wrong floor or unreachable).');
+        return;
       }
 
-      const shuttleFloorId = shuttleCurrentCell[0].floor_id;
-      logger.debug(`[Dispatcher] Shuttle ${optimalShuttle.id} is on floor ${shuttleFloorId}, pickup is on floor ${task.pickupNodeFloorId}`);
+      // 4. Calculate Path (Shuttle -> Pickup) (QR to QR)
+      // optimalShuttle.current_node is QR (mapped above)
+      const fullPath = await findShortestPath(optimalShuttle.current_node, task.pickupNodeQr, task.pickupNodeFloorId);
 
-      // 7. Calculate Path 1 (Current -> Pickup)
-      // NOTE: Current pathfinding only works within a single floor
-      // Ensure both values are numbers for comparison to avoid type mismatch issues.
-      if (Number(shuttleFloorId) !== Number(task.pickupNodeFloorId)) {
-        logger.warn(`[Dispatcher] Cross-floor pathfinding not yet supported. Shuttle ${optimalShuttle.id} is on floor ${shuttleFloorId}, but pickup ${task.pickupNode} is on floor ${task.pickupNodeFloorId}. Task ${task.taskId} will be retried. The pickupNode lock is HELD.`);
-        return; // Lock is held, just exit and retry next cycle
-      }
-
-      const fullPath = await findShortestPath(optimalShuttle.current_node, task.pickupNode, task.pickupNodeFloorId);
       if (!fullPath) {
-        logger.warn(`No path found for shuttle ${optimalShuttle.id} to ${task.pickupNode}. Task ${task.taskId} will be retried. The pickupNode lock is HELD.`);
-        return; // Lock is held, just exit and retry next cycle
+        logger.error(`[ShuttleDispatcherService] Failed to find path from ${optimalShuttle.current_node} to ${task.pickupNodeQr}`);
+        return;
       }
 
-      // 8. SUCCESS: All checks passed. Officially assign and dispatch.
-      // The pickupNode lock is now active and owned by this task.
-      logger.info(`[ShuttleDispatcherService] Assigning task ${task.taskId} to optimal shuttle ${optimalShuttle.id}.`);
-      await shuttleTaskQueueService.updateTaskStatus(task.taskId, 'assigned', optimalShuttle.id);
+      const pathSteps = fullPath.steps || fullPath; // Handle path format
 
-      // Send command with Path 1 and the event to signal on arrival
+      // 5. Send command to Shuttle
       const commandTopic = `shuttle/command/${optimalShuttle.id}`;
+      const pathPayload = {
+        action: 'move_path',
+        taskId: task.taskId,
+        path: pathSteps,
+        final_destination: task.pickupNodeQr,
+        // Additional info for the shuttle processing
+        meta: {
+          step: 'move_to_pickup',
+          pickupNodeQr: task.pickupNodeQr,
+          endNodeQr: task.endNodeQr,
+          itemInfo: task.itemInfo
+        }
+      };
+
+      // Note: We use pathPayload structure to match what simulator expects (path, taskInfo, onArrival, etc. might be needed)
+      // Simulator expects: { path: [], taskInfo: {}, onArrival: 'EVENT_NAME' } based on previous code snippets?
+      // Wait, let's look at Step 273 lines 156-160:
+      /*
       const commandPayload = {
         path: fullPath,
-        onArrival: 'PICKUP_COMPLETE', // Tell the simulator the exact event to fire
-        taskInfo: task // Also send task info for context
+        onArrival: 'PICKUP_COMPLETE', 
+        taskInfo: task 
       };
-      
-      publishToTopic(commandTopic, commandPayload);
+      */
+      // I should match that structure to be safe with simulator.
 
-      logger.info(`[ShuttleDispatcherService] Command with Path 1 sent to shuttle ${optimalShuttle.id} on topic ${commandTopic}.`);
+      const refinedPayload = {
+        path: pathSteps,
+        onArrival: 'PICKUP_COMPLETE',
+        taskInfo: {
+          ...task,
+          pickupNode: task.pickupNodeQr, // Polyfill for legacy simulator checks if any
+          endNode: task.endNodeQr
+        },
+        taskId: task.taskId
+      };
+
+      await publishToTopic(commandTopic, refinedPayload);
+
+      // 6. Update Task Status & Shuttle State
+      await shuttleTaskQueueService.updateTaskStatus(task.taskId, 'assigned', optimalShuttle.id);
+
+      logger.info(`[ShuttleDispatcherService] Dispatched task ${task.taskId} to shuttle ${optimalShuttle.id}. Path length: ${pathSteps.length}`);
 
     } catch (error) {
       logger.error('[ShuttleDispatcherService] Error during task dispatch:', error);
       // If a lock was acquired and an unexpected error occurred, release it to prevent a deadlock
       if (pickupResourceKey && task) {
-          logger.error(`[ShuttleDispatcherService] Releasing lock for ${pickupResourceKey} due to unexpected error.`);
-          await ReservationService.releaseLock(pickupResourceKey);
+        logger.error(`[ShuttleDispatcherService] Releasing lock for ${pickupResourceKey} due to unexpected error.`);
+        await ReservationService.releaseLock(pickupResourceKey);
       }
     }
   }

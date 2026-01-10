@@ -43,37 +43,44 @@ class ShuttleController {
         const stagingPromises = [];
 
         for (const request of requestsToProcess) {
-            const { pickupNode, rack, floor, listItem } = request;
+            const { pickupNodeQr, rackId, floorId, listItem } = request;
 
-            // Basic validation
-            if (!rack || !floor || !pickupNode || !listItem || !Array.isArray(listItem) || listItem.length === 0) {
+            // Updated validation for IDs and QRs
+            if (!rackId || !floorId || !pickupNodeQr || !listItem || !Array.isArray(listItem) || listItem.length === 0) {
                 logger.warn(`[Controller] Skipping invalid task request: ${JSON.stringify(request)}`);
                 continue;
             }
 
-            // More detailed validation (can be improved)
-            const floorInfo = await cellService.getFloorByRackAndFloorName(rack, floor);
-            if (!floorInfo) {
-                logger.warn(`[Controller] Floor '${floor}' not found in rack '${rack}'. Skipping request.`);
-                continue;
-            }
-            const pickupNodeFloorId = floorInfo.id;
-            
-            const pickupCell = await cellService.getCellByName(pickupNode, pickupNodeFloorId);
-            if (!pickupCell) {
-                logger.warn(`[Controller] Pickup node '${pickupNode}' not found on floor ${pickupNodeFloorId}. Skipping request.`);
+            // Validate rack and floor relationship using IDs
+            const isValidRackFloor = await cellService.validateRackFloor(rackId, floorId);
+            if (!isValidRackFloor) {
+                logger.warn(`[Controller] Invalid relationship between Rack ID ${rackId} and Floor ID ${floorId}. Skipping request.`);
                 continue;
             }
 
+            const pickupNodeFloorId = floorId;
+
+            // Validate pickup node using QR code
+            // Note: getCellByQrCode checks if cell exists on specific floor
+            const pickupCell = await cellService.getCellByQrCode(pickupNodeQr, pickupNodeFloorId);
+            if (!pickupCell) {
+                logger.warn(`[Controller] Pickup node QR '${pickupNodeQr}' not found on floor ${pickupNodeFloorId}. Skipping request.`);
+                continue;
+            }
+
+            // Enrich logging with names for human readability
+            const logName = await cellService.enrichLogWithNames(pickupNodeQr, floorId);
+            logger.info(`[Controller] Processing request for ${logName}`);
+
             // For each item in the request, create a separate task in the staging queue
             for (const item of listItem) {
-                logger.info(`[Controller] Staging item: "${item}" for pickupNode ${pickupNode}.Pushing to ${TASK_STAGING_QUEUE_KEY}.`);
+                logger.info(`[Controller] Staging item: "${item}" for pickupNode ${pickupNodeQr}.Pushing to ${TASK_STAGING_QUEUE_KEY}.`);
                 const taskToStage = {
-                    pickupNode,
+                    pickupNodeQr,    // Using QR code
                     pickupNodeFloorId,
                     itemInfo: item,
                 };
-                
+
                 stagingPromises.push(
                     redisClient.lPush(TASK_STAGING_QUEUE_KEY, JSON.stringify(taskToStage))
                 );

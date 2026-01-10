@@ -64,7 +64,7 @@ class Scheduler {
 
       // 1. Get next task from the staging queue
       stagedTaskJSON = await redisClient.rPop(TASK_STAGING_QUEUE_KEY);
-      
+
       // This case should theoretically not be hit if lLen > 0, but as a safeguard:
       if (!stagedTaskJSON) {
         logger.warn('[Scheduler] lLen reported items, but RPOP returned null. A race condition might have occurred.');
@@ -73,7 +73,7 @@ class Scheduler {
       }
 
       const stagedTask = JSON.parse(stagedTaskJSON);
-      logger.info(`[Scheduler] Popped task from staging queue for pickup: ${stagedTask.pickupNode}`);
+      logger.info(`[Scheduler] Popped task from staging queue for pickup: ${stagedTask.pickupNodeQr}`);
 
       // 2. Get a page of available endNodes
       const candidateNodes = await CellRepository.getAvailableEndNodes(1, ENDNODE_PAGE_SIZE);
@@ -83,24 +83,25 @@ class Scheduler {
         this.isProcessing = false;
         return;
       }
-      
+
       logger.debug(`[Scheduler] Found ${candidateNodes.length} candidate end-nodes. Attempting to lock one...`);
-      
+
       let isLockAcquired = false;
       // 3. Loop through candidateNodes and try to acquire lock
       for (const node of candidateNodes) {
         const resourceKey = `endnode:lock:${node.id}`;
-        const ownerId = `task_for_${stagedTask.pickupNode}_${stagedTask.itemInfo.ID || ''}`;
+        // Use pickupNodeQr in ownerId
+        const ownerId = `task_for_${stagedTask.pickupNodeQr}_${stagedTask.itemInfo.ID || ''}`;
 
         const lockAcquired = await ReservationService.acquireLock(resourceKey, ownerId, LOCK_TIMEOUT);
 
         if (lockAcquired) {
-          logger.info(`[Scheduler] Successfully acquired lock for end-node ${node.name} (ID: ${node.id})`);
-          
+          logger.info(`[Scheduler] Successfully acquired lock for end-node ${node.name} (ID: ${node.id}, QR: ${node.qr_code})`);
+
           // 4. If lock acquired, register the real task and break loop
           const finalTaskData = {
             ...stagedTask,
-            endNode: node.name,
+            endNodeQr: node.qr_code, // Use QR code
             endNodeFloorId: node.floor_id,
             endNodeCol: node.col,
             endNodeRow: node.row,

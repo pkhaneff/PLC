@@ -25,7 +25,7 @@ class CellService {
   async getCellByQrCodeAnyFloor(qrCode) {
     return CellRepository.getCellByQrCodeAnyFloor(qrCode);
   }
-  
+
   async getFloorByRackAndFloorName(rackName, floorName) {
     return CellRepository.getFloorByRackAndFloorName(rackName, floorName);
   }
@@ -42,6 +42,49 @@ class CellService {
     return CellRepository.getCellByPosition(col, row, floorId);
   }
 
+  // --- New ID-based methods for QR code system ---
+
+  /**
+   * Get floor by ID (instead of by name)
+   * @param {number} floorId - Floor ID
+   * @returns {Promise<object|null>} Floor info with rack name
+   */
+  async getFloorById(floorId) {
+    return CellRepository.getFloorById(floorId);
+  }
+
+  /**
+   * Validate rack and floor relationship
+   * @param {number} rackId - Rack ID
+   * @param {number} floorId - Floor ID
+   * @returns {Promise<boolean>} True if valid relationship
+   */
+  async validateRackFloor(rackId, floorId) {
+    return CellRepository.validateRackFloor(rackId, floorId);
+  }
+
+  /**
+   * Get cell with names for logging
+   * @param {string} qrCode - QR code
+   * @param {number} floorId - Floor ID
+   * @returns {Promise<object|null>} Cell with rack and floor names
+   */
+  async getCellWithNames(qrCode, floorId) {
+    return CellRepository.getCellWithNames(qrCode, floorId);
+  }
+
+  /**
+   * Enrich log with human-readable names
+   * @param {string} qrCode - QR code
+   * @param {number} floorId - Floor ID
+   * @returns {Promise<string>} Formatted string for logging
+   */
+  async enrichLogWithNames(qrCode, floorId) {
+    const cell = await this.getCellWithNames(qrCode, floorId);
+    if (!cell) return `QR:${qrCode}`;
+    return `${cell.name} (QR:${qrCode}, Rack:${cell.rack_name}, Floor:${cell.floor_name})`;
+  }
+
   // --- Write methods delegated to Repository ---
 
   async updateCellHasBox(cellId, hasBox) {
@@ -52,6 +95,16 @@ class CellService {
     return CellRepository.updateCellBlockStatus(cellId, isBlock);
   }
 
+  async getCellByCoordinate(col, row, floorId) {
+    try {
+      return await CellRepository.getCellByCoordinate(col, row, floorId);
+    } catch (error) {
+      logger.error(`Error in getCellByCoordinate: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // --- End ID Refactoring Methods ---
   // --- Obsolete Methods ---
   // The following methods are intentionally removed as their logic is replaced
   // by the new Scheduler Worker and distributed lock mechanism:
