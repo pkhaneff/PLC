@@ -35,50 +35,58 @@ class ShuttleController {
         if (!requestsToProcess || requestsToProcess.length === 0) {
             return res.status(400).json({
                 success: false,
-                error: 'Missing task data in request body. Provide a task object or an array of task objects.'
+                error: 'Missing task data in request body.'
             });
         }
 
+        // Load configuration
+        const shuttleConfig = require('../config/shuttle.config');
         let preparedTasksCount = 0;
         const stagingPromises = [];
 
         for (const request of requestsToProcess) {
-            const { pickupNodeQr, rackId, floorId, listItem } = request;
+            const { rackId, palletType, listItem } = request;
 
-            // Updated validation for IDs and QRs
-            if (!rackId || !floorId || !pickupNodeQr || !listItem || !Array.isArray(listItem) || listItem.length === 0) {
-                logger.warn(`[Controller] Skipping invalid task request: ${JSON.stringify(request)}`);
+            // 1. Basic validation
+            if (!rackId || !palletType || !listItem || !Array.isArray(listItem) || listItem.length === 0) {
+                logger.warn(`[Controller] Skipping invalid request (Missing rackId, palletType, or listItem): ${JSON.stringify(request)}`);
                 continue;
             }
 
-            // Validate rack and floor relationship using IDs
-            const isValidRackFloor = await cellService.validateRackFloor(rackId, floorId);
-            if (!isValidRackFloor) {
-                logger.warn(`[Controller] Invalid relationship between Rack ID ${rackId} and Floor ID ${floorId}. Skipping request.`);
+            // 2. Resolve Pickup Node from Config
+            const config = shuttleConfig.warehouses[rackId];
+            if (!config || !config.pickupNodeQr) {
+                logger.warn(`[Controller] No configuration found for Rack ID ${rackId}. Skipping request.`);
                 continue;
             }
 
-            const pickupNodeFloorId = floorId;
+            const pickupNodeQr = config.pickupNodeQr;
 
-            // Validate pickup node using QR code
-            // Note: getCellByQrCode checks if cell exists on specific floor
-            const pickupCell = await cellService.getCellByQrCode(pickupNodeQr, pickupNodeFloorId);
-            if (!pickupCell) {
-                logger.warn(`[Controller] Pickup node QR '${pickupNodeQr}' not found on floor ${pickupNodeFloorId}. Skipping request.`);
+            // 3. Resolve context from QR (Auto-find Floor and verify Rack)
+            const cellInfo = await cellService.getCellDeepInfoByQr(pickupNodeQr);
+            if (!cellInfo) {
+                logger.error(`[Controller] Pickup QR '${pickupNodeQr}' not found in database. Skipping.`);
                 continue;
             }
 
-            // Enrich logging with names for human readability
-            const logName = await cellService.enrichLogWithNames(pickupNodeQr, floorId);
-            logger.info(`[Controller] Processing request for ${logName}`);
+            // Optional Safety check: Does the QR actually belong to the rackId requested?
+            if (cellInfo.rack_id != rackId) {
+                logger.warn(`[Controller] Config mismatch: QR ${pickupNodeQr} belongs to Rack ${cellInfo.rack_id}, but request specified Rack ${rackId}. Skipping.`);
+                continue;
+            }
 
-            // For each item in the request, create a separate task in the staging queue
+            const pickupNodeFloorId = cellInfo.floor_id;
+
+            logger.info(`[Controller] Staging ${listItem.length} items for Rack ${rackId} starting at ${pickupNodeQr} (Floor ${pickupNodeFloorId})`);
+
+            // 4. Staging
             for (const item of listItem) {
-                logger.info(`[Controller] Staging item: "${item}" for pickupNode ${pickupNodeQr}.Pushing to ${TASK_STAGING_QUEUE_KEY}.`);
                 const taskToStage = {
-                    pickupNodeQr,    // Using QR code
+                    pickupNodeQr,
                     pickupNodeFloorId,
                     itemInfo: item,
+                    palletType: palletType,
+                    rackId: rackId // Pass rackId along for downstream config lookups
                 };
 
                 stagingPromises.push(

@@ -7,11 +7,6 @@ const REDIS_BACKUP_PATH_KEY = (shuttleId) => `${REDIS_KEY_PREFIX}backupPath:${sh
 const REDIS_CONFLICT_KEY = (shuttleId) => `${REDIS_KEY_PREFIX}conflicts:${shuttleId}`;
 const REDIS_RESERVED_NODE_KEY = (shuttleId) => `${REDIS_KEY_PREFIX}reservedNodes:${shuttleId}`;
 
-
-/**
- * Service layer for shuttle-related business logic, now using in-memory cache and Redis.
- * Decouples controllers and other services from the underlying state management.
- */
 class ShuttleService {
 
   #redisClient;
@@ -77,13 +72,6 @@ class ShuttleService {
 
   // --- Shuttle Status Updates (using shuttleStateCache and Timers) ---
 
-  /**
-   * Sets a shuttle's status to 'waiting' and starts a timer if needed.
-   * Replaces DB update for status and waiting_since.
-   * @param {string} shuttleId - The ID of the shuttle.
-   * @param {number} waitingSinceTimestamp - Timestamp when waiting started.
-   * @param {number} [timeoutDuration]
-   */
   async setShuttleWaiting(shuttleId, waitingSinceTimestamp, timeoutDuration = null) {
     updateShuttleState(shuttleId, { shuttleStatus: 'waiting', waitingSince: waitingSinceTimestamp });
     
@@ -94,7 +82,6 @@ class ShuttleService {
         this.clearShuttleWaiting(shuttleId);
       }, timeoutDuration);
     }
-    // Note: Specific logic for how long to wait and what to do next will depend on higher-level services.
   }
 
   /**
@@ -102,46 +89,28 @@ class ShuttleService {
    * @param {string} shuttleId - The ID of the shuttle.
    */
   async clearShuttleWaiting(shuttleId) {
-    // Assuming shuttle should go back to 'running' or 'idle' state after waiting
-    // This might need adjustment based on the dispatcher's logic.
-    // Status might need to be 'running' or 'idle' depending on context.
     updateShuttleState(shuttleId, { shuttleStatus: 'running', waitingSince: null, reroute_started_at: null }); 
     
     await this.clearConflicts(shuttleId);
-    // Clear backup path if it was used for rerouting and is now being cleared
-    await this.clearPaths(shuttleId, true); // Clear backup path in Redis
+    await this.clearPaths(shuttleId, true); 
   }
 
-  /**
-   * Sets a shuttle's status to 'completed'.
-   * @param {string} shuttleId - The ID of the shuttle.
-   */
   async setShuttleCompleted(shuttleId) {
     updateShuttleState(shuttleId, { shuttleStatus: 'completed', completed_at: Date.now() });
-    // Clear temporary data from Redis as the shuttle is completed.
-    await this.clearPaths(shuttleId, false); // Clear main path
-    await this.clearPaths(shuttleId, true);  // Clear backup path
-    await this.clearConflicts(shuttleId); // Clear conflicts
-    await this.clearReservedNodes(shuttleId); // Clear reserved nodes
+    await this.clearPaths(shuttleId, false);
+    await this.clearPaths(shuttleId, true);
+    await this.clearConflicts(shuttleId);
+    await this.clearReservedNodes(shuttleId);
   }
 
   // --- Path Management (using Redis) ---
 
-  /**
-   * Saves a shuttle's path (or backup path) to Redis.
-   * @param {string} shuttleId - The ID of the shuttle.
-   * @param {Array<string>} path - The array of QR codes representing the path.
-   * @param {boolean} isBackupPath - Whether this is a backup path.
-   */
   async savePath(shuttleId, path, isBackupPath = false) {
     const redisKey = isBackupPath ? REDIS_BACKUP_PATH_KEY(shuttleId) : REDIS_PATH_KEY(shuttleId);
     try {
       if (path && path.length > 0) {
         await this.#redisClient.set(redisKey, JSON.stringify(path));
-        // Consider setting an expiry if paths are considered temporary and should auto-clean
-        // await this.#redisClient.expire(redisKey, 3600); // Example: expire after 1 hour
       } else {
-        // If path is empty or null, remove it from Redis
         await this.#redisClient.del(redisKey);
       }
     } catch (error) {
@@ -150,12 +119,6 @@ class ShuttleService {
     }
   }
 
-  /**
-   * Retrieves a shuttle's path (or backup path) from Redis.
-   * @param {string} shuttleId - The ID of the shuttle.
-   * @param {boolean} isBackupPath - Whether to retrieve the backup path.
-   * @returns {Promise<Array<string>>} The path array, or an empty array if not found or invalid.
-   */
   async getPath(shuttleId, isBackupPath = false) {
     const redisKey = isBackupPath ? REDIS_BACKUP_PATH_KEY(shuttleId) : REDIS_PATH_KEY(shuttleId);
     try {
@@ -163,7 +126,7 @@ class ShuttleService {
       if (pathJson) {
         return JSON.parse(pathJson);
       }
-      return []; // Return empty array if no path found
+      return [];
     } catch (error) {
       console.error(`[ShuttleService] Error getting path for shuttle ${shuttleId} from Redis:`, error);
       return [];

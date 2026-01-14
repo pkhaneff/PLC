@@ -5,6 +5,7 @@ const BacktrackService = require('./BacktrackService');
 const RerouteService = require('./RerouteService');
 const { getShuttleState } = require('./shuttleStateCache');
 const redisClient = require('../../redis/init.redis');
+const PathCacheService = require('./PathCacheService'); // Import PathCacheService
 
 /**
  * Main orchestrator for conflict resolution.
@@ -344,25 +345,35 @@ class ConflictResolutionService {
             // Get target node for backup calculation
             const taskInfo = await this.getTaskInfo(shuttleId);
             const targetNode = taskInfo?.endNodeQr || taskInfo?.pickupNodeQr;
+            const shuttleState = getShuttleState(shuttleId); // Get current shuttle state for isCarrying
 
             if (targetNode) {
-                // Start background backup calculation
+                // Get traffic data for background reroute calculation
+                const trafficData = await PathCacheService.getAllActivePaths();
+
+                // Start background backup calculation with dynamic options
                 RerouteService.calculateBackupInBackground(
                     shuttleId,
                     conflict,
                     waitNode,
                     targetNode,
-                    floorId
+                    floorId,
+                    {
+                        isCarrying: shuttleState?.isCarrying || false,
+                        waitingTime: 0, // Initial waiting time
+                        emergency: false,
+                        trafficData: trafficData
+                    }
                 ).catch(err => {
                     logger.error(`[ConflictResolution] Background backup calculation error:`, err);
                 });
             }
 
-            // Set timeout (30 seconds)
-            const timeout = 30000;
+            // Set initial timeout for the first re-evaluation of waiting status (e.g., 5 seconds)
+            const initialRetryDelay = 5000;
             setTimeout(async () => {
-                await this.handleWaitTimeout(shuttleId, conflict, floorId);
-            }, timeout);
+                await this.handleWaitTimeout(shuttleId, conflict, floorId, 0); // Pass current wait count (0 for first attempt)
+            }, initialRetryDelay);
 
         } catch (error) {
             logger.error(`[ConflictResolution] Error in wait at node:`, error);
@@ -377,7 +388,7 @@ class ConflictResolutionService {
      * @param {number} floorId - Floor ID
      * @returns {Promise<void>}
      */
-    async handleWaitTimeout(shuttleId, conflict, floorId) {
+    async handleWaitTimeout(shuttleId, conflict, floorId, retryCount) {
         try {
             // Check if still waiting
             const status = await redisClient.get(`shuttle:${shuttleId}:status`);
@@ -386,20 +397,81 @@ class ConflictResolutionService {
                 return;
             }
 
-            logger.warn(`[ConflictResolution] Wait timeout for shuttle ${shuttleId}, applying backup reroute`);
+            logger.warn(`[ConflictResolution] Wait timeout for shuttle ${shuttleId}, attempt ${retryCount + 1}`);
 
-            // Get backup path
-            const backupPath = await RerouteService.getBackupPath(shuttleId);
+            // Retrieve current waiting time
+            const waitingSince = await redisClient.get(`shuttle:${shuttleId}:waiting_since`);
+            const currentTime = Date.now();
+            const waitingTime = waitingSince ? (currentTime - parseInt(waitingSince, 10)) : 0;
 
-            if (backupPath) {
-                await RerouteService.applyBackupPath(shuttleId, backupPath, 'Wait timeout');
+            const taskInfo = await this.getTaskInfo(shuttleId);
+            const shuttleState = getShuttleState(shuttleId);
+
+            // Get traffic data for reroute calculation
+            const trafficData = await PathCacheService.getAllActivePaths();
+
+            let rerouteOptions = {
+                isCarrying: shuttleState?.isCarrying || false,
+                waitingTime: waitingTime,
+                trafficData: trafficData,
+                emergency: false
+            };
+
+            const EMERGENCY_TIMEOUT = 45000; // 45 seconds to emergency reroute
+            if (waitingTime >= EMERGENCY_TIMEOUT) {
+                rerouteOptions.emergency = true;
+                logger.warn(`[ConflictResolution] Shuttle ${shuttleId} waiting for ${waitingTime}ms. Activating emergency reroute!`);
+            }
+
+            // Get target node for backup calculation (current target from current path/task)
+            const currentPath = await PathCacheService.getPath(shuttleId);
+            const targetNode = currentPath?.path?.meta?.endNodeQr || taskInfo?.endNodeQr || taskInfo?.pickupNodeQr;
+            const currentNode = shuttleState?.qrCode; // Current position of shuttle
+
+            if (!targetNode || !currentNode) {
+                logger.error(`[ConflictResolution] Cannot determine target or current node for reroute of ${shuttleId}.`);
+                // TODO: Escalate
+                await redisClient.del(`shuttle:${shuttleId}:waiting_since`); // Clear waiting state
+                return;
+            }
+
+            // Recalculate backup path with updated options
+            const rerouteResult = await RerouteService.calculateBackupReroute(
+                shuttleId,
+                conflict, // Original conflict info might be useful for avoidance
+                currentNode,
+                targetNode,
+                floorId,
+                rerouteOptions
+            );
+
+            if (rerouteResult && rerouteResult.path) {
+                await RerouteService.applyBackupPath(shuttleId, rerouteResult.path, `Wait timeout - attempt ${retryCount + 1}`);
+                logger.info(`[ConflictResolution] Reroute applied for ${shuttleId} after ${waitingTime}ms wait.`);
+                // Clear waiting state after successful reroute
+                await redisClient.del(`shuttle:${shuttleId}:waiting_since`);
+                return;
             } else {
-                logger.error(`[ConflictResolution] No backup path available for ${shuttleId}`);
-                // TODO: Escalate to human operator
+                logger.warn(`[ConflictResolution] No suitable reroute found for ${shuttleId} after ${waitingTime}ms wait (attempt ${retryCount + 1}).`);
+                
+                const MAX_RETRIES = 5; // Example: Try 5 times before escalating
+                const RETRY_INTERVAL_MS = 10000; // Example: Retry every 10 seconds
+
+                if (retryCount < MAX_RETRIES && waitingTime < EMERGENCY_TIMEOUT) {
+                    const nextRetryDelay = RETRY_INTERVAL_MS; // Simplified for now
+                    logger.info(`[ConflictResolution] Scheduling next reroute attempt for ${shuttleId} in ${nextRetryDelay}ms.`);
+                    setTimeout(async () => {
+                        await this.handleWaitTimeout(shuttleId, conflict, floorId, retryCount + 1);
+                    }, nextRetryDelay);
+                } else {
+                    logger.error(`[ConflictResolution] Max reroute retries reached or emergency timeout for ${shuttleId}. Escalating.`);
+                    // TODO: Escalate to human operator / external system
+                    await redisClient.del(`shuttle:${shuttleId}:waiting_since`); // Clear waiting state
+                }
             }
 
         } catch (error) {
-            logger.error(`[ConflictResolution] Error handling wait timeout:`, error);
+            logger.error(`[ConflictResolution] Error handling wait timeout for ${shuttleId}:`, error);
         }
     }
 

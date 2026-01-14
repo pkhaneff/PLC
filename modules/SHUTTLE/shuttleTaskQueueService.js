@@ -79,24 +79,16 @@ class ShuttleTaskQueueService {
       await redisClient.hSet(this.getTaskKey(taskId), fullTaskDetails);
 
       // 2. Thêm task vào hàng đợi tổng (Sorted Set với score = timestamp)
-      const globalQueueData = {
-        taskId,
-        pickupNodeQr,
-        pickupNodeFloorId, // Include floor ID in global queue data
-        endNodeQr,
-        timestamp,
-        priority: taskData.priority || 0 // Default priority
-      };
-
+      // CRITICAL FIX: Use taskId as value instead of JSON object to avoid matching issues
       await redisClient.zAdd(this.GLOBAL_TASK_QUEUE_KEY, {
         score: timestamp,
-        value: JSON.stringify(globalQueueData)
+        value: taskId // Simple string, easy to remove later
       });
 
       // Lấy vị trí trong hàng đợi tổng
       const position = await redisClient.zRank(
         this.GLOBAL_TASK_QUEUE_KEY,
-        JSON.stringify(globalQueueData)
+        taskId
       );
 
       console.log(`✓ Shuttle Task ${taskId} registered: ${pickupNodeQr} → ${endNodeQr}, Position: ${position + 1}`);
@@ -120,14 +112,15 @@ class ShuttleTaskQueueService {
   async getNextPendingTask() {
     try {
       // Lấy task đầu tiên trong sorted set (score thấp nhất = đăng ký sớm nhất)
+      // FIXED: Now the value is taskId (string), not JSON object
       const tasks = await redisClient.zRange(this.GLOBAL_TASK_QUEUE_KEY, 0, 0);
 
       if (tasks.length === 0) {
         return null;
       }
 
-      const taskSummary = JSON.parse(tasks[0]);
-      const taskDetails = await this.getTaskDetails(taskSummary.taskId);
+      const taskId = tasks[0]; // Direct taskId string
+      const taskDetails = await this.getTaskDetails(taskId);
 
       // Chỉ trả về nếu trạng thái là 'pending'
       if (taskDetails && taskDetails.status === 'pending') {
@@ -135,10 +128,7 @@ class ShuttleTaskQueueService {
         if (taskDetails.itemInfo && typeof taskDetails.itemInfo === 'string') {
           try { taskDetails.itemInfo = JSON.parse(taskDetails.itemInfo); } catch (e) { /* ignore */ }
         }
-        return {
-          ...taskSummary,
-          ...taskDetails
-        };
+        return taskDetails;
       } else {
         return null;
       }
@@ -170,11 +160,11 @@ class ShuttleTaskQueueService {
   async getGlobalQueue(limit = 0) {
     try {
       const end = limit > 0 ? limit - 1 : -1;
+      // FIXED: Now tasks array contains taskId strings, not JSON objects
       const tasks = await redisClient.zRange(this.GLOBAL_TASK_QUEUE_KEY, 0, end);
 
-      const fullTasks = await Promise.all(tasks.map(async taskStr => {
-        const taskSummary = JSON.parse(taskStr);
-        const taskDetails = await this.getTaskDetails(taskSummary.taskId);
+      const fullTasks = await Promise.all(tasks.map(async taskId => {
+        const taskDetails = await this.getTaskDetails(taskId);
         // Chuyển đổi lại itemInfo và externalSignalData thành object
         if (taskDetails && taskDetails.itemInfo && typeof taskDetails.itemInfo === 'string') {
           try { taskDetails.itemInfo = JSON.parse(taskDetails.itemInfo); } catch (e) { /* ignore */ }
@@ -182,7 +172,7 @@ class ShuttleTaskQueueService {
         if (taskDetails && taskDetails.externalSignalData && typeof taskDetails.externalSignalData === 'string') {
           try { taskDetails.externalSignalData = JSON.parse(taskDetails.externalSignalData); } catch (e) { /* ignore */ }
         }
-        return { ...taskSummary, ...taskDetails };
+        return taskDetails;
       }));
 
       return fullTasks;
@@ -209,7 +199,23 @@ class ShuttleTaskQueueService {
       }
       return null;
     } catch (error) {
-      console.error('Error getting shuttle task details:', error);
+      logger.error('Error getting shuttle task details:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get the active task currently assigned to a shuttle.
+   * @param {string} shuttleId 
+   * @returns {Promise<object|null>} Task details or null
+   */
+  async getShuttleTask(shuttleId) {
+    try {
+      const taskId = await redisClient.get(`shuttle:active_task:${shuttleId}`);
+      if (!taskId) return null;
+      return await this.getTaskDetails(taskId);
+    } catch (error) {
+      logger.error(`Error getting active task for shuttle ${shuttleId}:`, error);
       return null;
     }
   }
@@ -247,32 +253,36 @@ class ShuttleTaskQueueService {
         // Add to the set of tasks currently being processed
         await redisClient.sAdd(this.PROCESSING_TASKS_KEY, taskId);
 
-        // IMPORTANT: Remove from the main pending queue to unblock the dispatcher.
-        const taskDetails = await redisClient.hGetAll(taskKey);
-        if (taskDetails && taskDetails.timestamp) {
-          const globalQueueData = {
-            taskId: taskDetails.taskId,
-            pickupNodeQr: taskDetails.pickupNodeQr,
-            pickupNodeFloorId: parseInt(taskDetails.pickupNodeFloorId, 10), // CRITICAL: Convert to number
-            endNodeQr: taskDetails.endNodeQr,
-            timestamp: parseInt(taskDetails.timestamp, 10),
-            priority: parseInt(taskDetails.priority, 10) || 0,
-          };
-          const valueToRemove = JSON.stringify(globalQueueData);
-          const removeResult = await redisClient.zRem(this.GLOBAL_TASK_QUEUE_KEY, valueToRemove);
-          if (removeResult > 0) {
-            logger.info(`[TaskQueueService] Removed task ${taskId} from global pending queue.`);
-          } else {
-            logger.warn(`[TaskQueueService] Failed to remove task ${taskId} from global pending queue. JSON may not match.`);
-          }
+        // Map shuttle to task
+        if (assignedShuttleId) {
+          await redisClient.set(`shuttle:active_task:${assignedShuttleId}`, taskId);
+        }
+
+        // CRITICAL FIX: Remove from the main pending queue to unblock the dispatcher.
+        // Now we can simply use taskId instead of complex JSON matching
+        const removeResult = await redisClient.zRem(this.GLOBAL_TASK_QUEUE_KEY, taskId);
+        if (removeResult > 0) {
+          logger.info(`[TaskQueueService] Removed task ${taskId} from global pending queue.`);
+        } else {
+          logger.warn(`[TaskQueueService] Failed to remove task ${taskId} from global pending queue. Task may not exist in queue.`);
         }
 
       } else if (status === 'completed') {
+        // Find assigned shuttle to clear mapping
+        const taskDetails = await this.getTaskDetails(taskId);
+        if (taskDetails && taskDetails.assignedShuttleId) {
+          await redisClient.del(`shuttle:active_task:${taskDetails.assignedShuttleId}`);
+        }
+
         await redisClient.sRem(this.PROCESSING_TASKS_KEY, taskId);
         await redisClient.del(taskKey);
         logger.info(`[TaskQueueService] Task ${taskId} completed and cleared from Redis.`);
 
       } else if (status === 'failed') {
+        const taskDetails = await this.getTaskDetails(taskId);
+        if (taskDetails && taskDetails.assignedShuttleId) {
+          await redisClient.del(`shuttle:active_task:${taskDetails.assignedShuttleId}`);
+        }
         await redisClient.sRem(this.PROCESSING_TASKS_KEY, taskId);
         logger.warn(`[TaskQueueService] Task ${taskId} failed. Left details in Redis for inspection.`);
       }
@@ -298,21 +308,8 @@ class ShuttleTaskQueueService {
       // Xóa khỏi processing tasks set
       await redisClient.sRem(this.PROCESSING_TASKS_KEY, taskId);
 
-      // Lấy thông tin task để xóa khỏi global_task_queue (cần JSON string gốc)
-      const taskDetails = await this.getTaskDetails(taskId);
-      if (taskDetails) {
-        // Un-reserve logic removed as per original file...
-
-        const globalQueueData = {
-          taskId: taskDetails.taskId,
-          pickupNodeQr: taskDetails.pickupNodeQr,
-          pickupNodeFloorId: parseInt(taskDetails.pickupNodeFloorId, 10), // Convert to number
-          endNodeQr: taskDetails.endNodeQr,
-          timestamp: parseInt(taskDetails.timestamp, 10), // Convert to number
-          priority: parseInt(taskDetails.priority, 10) || 0
-        };
-        await redisClient.zRem(this.GLOBAL_TASK_QUEUE_KEY, JSON.stringify(globalQueueData));
-      }
+      // FIXED: Remove from global queue using simple taskId
+      await redisClient.zRem(this.GLOBAL_TASK_QUEUE_KEY, taskId);
 
       // Xóa task details hash
       await redisClient.del(this.getTaskKey(taskId));

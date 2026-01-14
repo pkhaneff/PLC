@@ -9,6 +9,8 @@ const ReservationService = require('../COMMON/reservationService');
 const ConflictResolutionService = require('./ConflictResolutionService');
 const NodeOccupationService = require('./NodeOccupationService');
 
+const PathCacheService = require('./PathCacheService'); // Import PathCacheService
+
 const MQTT_BROKER_URL = process.env.MQTT_URL || 'mqtt://localhost:1883';
 const SHUTTLE_IDLE_STATUS = 8; // Define constant for IDLE status
 
@@ -145,7 +147,8 @@ class TaskEventListener {
 
       // Block initial node where shuttle starts
       await NodeOccupationService.blockNode(initialNode, shuttleId);
-      logger.info(`[TaskEventListener] Shuttle ${shuttleId} initialized at ${initialNode}, node blocked`);
+      const nodeName = await cellService.getDisplayNameWithoutFloor(initialNode);
+      logger.info(`[TaskEventListener] Shuttle ${shuttleId} initialized at ${nodeName}, node blocked`);
 
     } catch (error) {
       logger.error(`[TaskEventListener] Error handling shuttle-initialized for ${shuttleId}:`, error);
@@ -164,12 +167,83 @@ class TaskEventListener {
       // Update node occupation: block new node, unblock old node
       await NodeOccupationService.handleShuttleMove(shuttleId, previousNode, currentNode);
 
+      // --- 2-Stage Sequential Lock Release Logic ---
+      // CRITICAL: Lock is ONLY released when BOTH conditions are met IN ORDER:
+      // 1. PICKUP_COMPLETE must happen FIRST (pickupCompleted flag set)
+      // 2. THEN shuttle passes safetyNodeExit WHILE carrying cargo
+      const taskInfo = await shuttleTaskQueueService.getShuttleTask(shuttleId);
+
+      if (!taskInfo) {
+        return; // No active task
+      }
+
+      // Check if shuttle reached safety exit node
+      const shuttleConfig = require('../../config/shuttle.config');
+      const configEntry = Object.entries(shuttleConfig.warehouses).find(
+        ([, config]) => config.pickupNodeQr === taskInfo.pickupNodeQr
+      );
+
+      if (!configEntry) {
+        return; // No matching config
+      }
+
+      const config = configEntry[1];
+
+      // DEBUG: Log every node shuttle passes to verify QR codes
+      logger.info(`[TaskEventListener] 🔍 DEBUG: Shuttle ${shuttleId} at QR: ${currentNode}, looking for safetyNodeExit: ${config.safetyNodeExit}, match: ${currentNode === config.safetyNodeExit}`);
+
+      if (currentNode === config.safetyNodeExit) {
+        // Shuttle is at safety exit node
+        // CHECK BOTH CONDITIONS:
+
+        // 1. Check if pickup was completed (flag in task)
+        const redisClient = require('../../redis/init.redis');
+        const taskKey = shuttleTaskQueueService.getTaskKey(taskInfo.taskId);
+        const pickupCompleted = await redisClient.hGet(taskKey, 'pickupCompleted');
+
+        if (pickupCompleted !== 'true') {
+          // Pickup NOT completed yet - shuttle is going TO pickup, not FROM pickup
+          logger.debug(`[TaskEventListener] Shuttle ${shuttleId} at safety exit but pickup not completed. Going TO pickup, not releasing lock.`);
+          return;
+        }
+
+        // 2. Check if shuttle is carrying cargo
+        const { getShuttleState } = require('./shuttleStateCache');
+        const shuttleState = await getShuttleState(shuttleId);
+
+        if (!shuttleState || !shuttleState.isCarrying) {
+          // Not carrying cargo - should not happen if pickupCompleted is true, but check anyway
+          logger.warn(`[TaskEventListener] Shuttle ${shuttleId} at safety exit with pickupCompleted=true but not carrying cargo!`);
+          return;
+        }
+
+        // BOTH conditions met IN ORDER: pickup completed + at exit + carrying cargo
+        const safetyNodeName = await cellService.getDisplayNameWithoutFloor(currentNode);
+        const pickupName = await cellService.getCachedDisplayName(taskInfo.pickupNodeQr, taskInfo.pickupNodeFloorId);
+        logger.info(`[TaskEventListener] ✅ Shuttle ${shuttleId} passed Safety Exit Node ${safetyNodeName} with cargo AFTER pickup. Releasing Pickup Lock for ${pickupName}.`);
+
+        const pickupLockKey = `pickup:lock:${config.pickupNodeQr}`;
+        await ReservationService.releaseLock(pickupLockKey);
+
+        // Clear the pickupCompleted flag to prevent double release
+        await redisClient.hDel(taskKey, 'pickupCompleted');
+
+        // Idea 1: Proactively trigger dispatcher after lock release
+        if (this.dispatcher) {
+            logger.info(`[TaskEventListener] Proactively triggering next dispatch cycle after pickup lock release.`);
+            setTimeout(() => this.dispatcher.dispatchNextTask(), 1000); // 1-second delay
+        }
+      }
+      // --- End 2-Stage Sequential Logic ---
+
     } catch (error) {
       logger.error(`[TaskEventListener] Error handling shuttle-moved for ${shuttleId}:`, error);
     }
   }
 
   async handlePickupComplete(taskId, shuttleId) {
+    logger.info(`[TaskEventListener] >>> handlePickupComplete called for task ${taskId}, shuttle ${shuttleId}`);
+
     const taskDetails = await shuttleTaskQueueService.getTaskDetails(taskId);
     if (!taskDetails) {
       logger.error(`[TaskEventListener] Cannot find details for task ${taskId} after pickup.`);
@@ -177,38 +251,119 @@ class TaskEventListener {
     }
 
     const { pickupNodeQr, pickupNodeFloorId, endNodeQr, endNodeFloorId } = taskDetails;
-    // Enrich logs
-    const pickupName = await cellService.enrichLogWithNames(pickupNodeQr, pickupNodeFloorId);
-    const endName = await cellService.enrichLogWithNames(endNodeQr, endNodeFloorId);
+    // Enrich logs with cell names
+    const pickupName = await cellService.getCachedDisplayName(pickupNodeQr, pickupNodeFloorId);
+    const endName = await cellService.getCachedDisplayName(endNodeQr, endNodeFloorId);
     logger.info(`[TaskEventListener] Task ${taskId} details - pickup: ${pickupName}, end: ${endName}`);
-
-    // --- Pipelining Logic ---
-    // Release the lock on the pickupNode so the next shuttle can be dispatched to it.
-    // Use pickupNodeQr for lock key
-    const pickupLockKey = `pickup:lock:${pickupNodeQr}`;
-    await ReservationService.releaseLock(pickupLockKey);
-    // --- End Pipelining Logic ---
 
     await shuttleTaskQueueService.updateTaskStatus(taskId, 'in_progress');
 
+    // --- Set pickupCompleted flag (Stage 1 of 2-stage lock release) ---
+    // This flag indicates pickup is complete. Lock will be released when shuttle
+    // passes safetyNodeExit (Stage 2) in handleShuttleMoved.
+    const redisClient = require('../../redis/init.redis');
+    const taskKey = shuttleTaskQueueService.getTaskKey(taskId);
+    await redisClient.hSet(taskKey, 'pickupCompleted', 'true');
+    logger.info(`[TaskEventListener] 🏁 Stage 1 complete: Shuttle ${shuttleId} completed pickup at ${pickupName}. Waiting for Stage 2 (pass safetyNodeExit).`);
+    // --- End Stage 1 ---
+
     // Verify pickup node still exists? (Optional, skipping for speed)
 
-    // Path 2: Pickup -> End (QR to QR)
-    const path2 = await findShortestPath(pickupNodeQr, endNodeQr, endNodeFloorId);
+    // Dynamic Obstacle Avoidance for Path 2 (Soft Avoidance)
+    const occupiedMap = await NodeOccupationService.getAllOccupiedNodes();
+    const avoidNodes = Object.keys(occupiedMap).filter(qr =>
+      qr !== pickupNodeQr && // Don't avoid start
+      qr !== endNodeQr       // Don't avoid destination
+    );
+    logger.info(`[TaskEventListener] Planning Path 2 (Pickup->End) avoiding ${avoidNodes.length} obstacles.`);
+
+    // Get all active paths from PathCacheService for traffic awareness
+    const trafficData = await PathCacheService.getAllActivePaths();
+    logger.debug(`[TaskEventListener] Traffic data for pathfinding: ${JSON.stringify(trafficData.map(t => t.shuttleId))}`);
+
+    // 1. Try to find path avoiding obstacles with DROP_OFF action at destination
+    const { TASK_ACTIONS } = require('../../config/shuttle.config');
+    let path2 = await findShortestPath(
+      pickupNodeQr,
+      endNodeQr,
+      endNodeFloorId,
+      {
+        avoid: avoidNodes,
+        isCarrying: true, // Shuttle is now carrying cargo
+        trafficData: trafficData, // Pass traffic data for proactive avoidance
+        lastStepAction: TASK_ACTIONS.DROP_OFF
+      }
+    );
+
+    // 2. Fallback: If no path found avoiding obstacles, try direct path (ConflictResolution will handle yielding)
+    if (!path2) {
+      logger.warn(`[TaskEventListener] Soft avoidance failed for Path 2. Trying direct path (relying on Priority/Yield).`);
+      // Pass avoid: [] to EXPLICITLY disable auto-injection of dynamic obstacles in the fallback
+      path2 = await findShortestPath(
+        pickupNodeQr,
+        endNodeQr,
+        endNodeFloorId,
+        {
+          avoid: [],
+          isCarrying: true, // Still carrying on fallback
+          trafficData: trafficData, // Pass traffic data for proactive avoidance
+          lastStepAction: TASK_ACTIONS.DROP_OFF
+        }
+      );
+    }
+
     if (!path2) {
       logger.error(`[TaskEventListener] Failed to find Path 2 for task ${taskId}. Marking as failed.`);
       await shuttleTaskQueueService.updateTaskStatus(taskId, 'failed');
       return;
     }
 
-    const commandPayload = {
-      path: path2.steps || path2, // Adjust depending on return format of findShortestPath
-      taskInfo: taskDetails,
-      onArrival: 'TASK_COMPLETE',
+    // Ensure path has steps before saving
+    if (!path2 || !path2.totalStep || path2.totalStep === 0) {
+      logger.error(`[TaskEventListener] Path calculated for task ${taskId} has no steps.`);
+      await shuttleTaskQueueService.updateTaskStatus(taskId, 'failed');
+      return;
+    }
+
+    // Save the path to PathCacheService (Trụ cột 1)
+    await PathCacheService.savePath(shuttleId, path2);
+    logger.info(`[TaskEventListener] Path for shuttle ${shuttleId} (task ${taskId}) saved to PathCacheService.`);
+
+    // UPDATE STATE: Mark task and shuttle as carrying cargo so Priority Service works
+    await redisClient.hSet(taskKey, 'isCarrying', 'true'); // Update Redis Task
+
+    // CRITICAL FIX: getShuttleState() is now async (reads from Redis)
+    const { getShuttleState } = require('./shuttleStateCache');
+    const currentShuttleState = await getShuttleState(shuttleId) || {};
+    await updateShuttleState(shuttleId, { ...currentShuttleState, isCarrying: true, packageStatus: 1 });
+    logger.info(`[TaskEventListener] Updated Task ${taskId} and Shuttle ${shuttleId} state to isCarrying=true`);
+
+    // Send mission using new format with retry mechanism
+    const { MQTT_TOPICS } = require('../../config/shuttle.config');
+    const pathSteps = path2.steps || path2;
+    const missionTopic = `${MQTT_TOPICS.SEND_MISSION}/${shuttleId}`;
+
+    const missionPayload = {
+      ...pathSteps,
+      meta: {
+        taskId: taskId,
+        onArrival: 'TASK_COMPLETE',
+        step: 'move_to_end',
+        pickupNodeQr: pickupNodeQr,
+        endNodeQr: endNodeQr,
+        itemInfo: taskDetails.itemInfo
+      }
     };
-    const commandTopic = `shuttle/command/${shuttleId}`;
-    mqttService.publishToTopic(commandTopic, commandPayload);
-    logger.info(`[TaskEventListener] Sent Path 2 command to shuttle ${shuttleId} for task ${taskId}.`);
+
+    // Use dispatcher's retry mechanism if available
+    if (this.dispatcher && this.dispatcher.publishMissionWithRetry) {
+      await this.dispatcher.publishMissionWithRetry(missionTopic, missionPayload, shuttleId);
+    } else {
+      // Fallback to direct publish
+      mqttService.publishToTopic(missionTopic, missionPayload);
+    }
+
+    logger.info(`[TaskEventListener] Sent Path 2 mission to shuttle ${shuttleId} for task ${taskId}. Route: ${pickupName} -> ${endName} (${pathSteps.totalStep} steps)`);
   }
 
   async handleTaskComplete(taskId, shuttleId) {
@@ -220,15 +375,21 @@ class TaskEventListener {
         logger.info(`[TaskEventListener] Proactively triggering next dispatch cycle due to task completion/failure.`);
         setTimeout(() => this.dispatcher.dispatchNextTask(), 1000); // 1-second delay
       }
+      // CRITICAL: Delete path even if task details are missing to clean up
+      await PathCacheService.deletePath(shuttleId);
+      logger.info(`[TaskEventListener] Path for shuttle ${shuttleId} (task ${taskId}) deleted from PathCacheService due to task complete (details missing).`);
       return;
     }
 
     // Lookup cell by QR to get ID
     const endNodeCell = await cellService.getCellByQrCode(taskDetails.endNodeQr, taskDetails.endNodeFloorId);
     if (endNodeCell) {
-      // 1. Update DB: Mark cell as having a box
-      await cellService.updateCellHasBox(endNodeCell.id, true);
-      logger.info(`[TaskEventListener] DB updated: Cell ${endNodeCell.id} marked as is_has_box = 1.`);
+      // 1. Update DB: Mark cell as having a box and store pallet ID
+      // Assuming itemInfo is the pallet ID or contains it. If it's a simple string, use it directly.
+      const palletId = typeof taskDetails.itemInfo === 'object' ? taskDetails.itemInfo.id || JSON.stringify(taskDetails.itemInfo) : taskDetails.itemInfo;
+
+      await cellService.updateCellHasBox(endNodeCell.id, true, palletId);
+      logger.info(`[TaskEventListener] DB updated: Cell ${endNodeCell.id} marked as is_has_box = 1 with pallet_id = ${palletId}.`);
 
       // 2. Release Redis Lock for the endNode
       // Note: Lock key uses ID, so we needed the lookup
@@ -241,17 +402,36 @@ class TaskEventListener {
 
     // 4. Final step: update task status to completed
     await shuttleTaskQueueService.updateTaskStatus(taskId, 'completed');
-    logger.info(`[TaskEventListener] Task ${taskId} successfully completed by shuttle ${shuttleId}.`);
+    const endNodeName = await cellService.getCachedDisplayName(taskDetails.endNodeQr, taskDetails.endNodeFloorId);
+    logger.info(`[TaskEventListener] Task ${taskId} successfully completed by shuttle ${shuttleId} at ${endNodeName}.`);
 
     // 5. Keep node occupation - shuttle is still physically at this node
     // The node will be unblocked automatically when shuttle moves to next task
     logger.debug(`[TaskEventListener] Shuttle ${shuttleId} remains at current node, keeping occupation`);
 
-    // 6. Proactively trigger the next dispatch cycle after a short delay
+    // 6. Force update shuttle status to IDLE (8) in Redis so Dispatcher can pick it up immediately
+    // CRITICAL FIX: getShuttleState() is now async (reads from Redis)
+    const { getShuttleState } = require('./shuttleStateCache');
+    const currentState = await getShuttleState(shuttleId) || {};
+    await updateShuttleState(shuttleId, {
+      ...currentState,
+      shuttleStatus: 8, // Force IDLE
+      packageStatus: 0, // No longer carrying
+      isCarrying: false,
+      current_node: taskDetails.endNodeQr, // Update current node to end node QR
+      qrCode: taskDetails.endNodeQr     // Ensure consistency
+    });
+    logger.info(`[TaskEventListener] Force updated shuttle ${shuttleId} status to IDLE (8) in Redis.`);
+
+    // 7. Proactively trigger the next dispatch cycle after a short delay
     if (this.dispatcher) {
       logger.info(`[TaskEventListener] Proactively triggering next dispatch cycle in 1 second.`);
       setTimeout(() => this.dispatcher.dispatchNextTask(), 1000);
     }
+
+    // Delete path from PathCacheService (Trụ cột 1)
+    await PathCacheService.deletePath(shuttleId);
+    logger.info(`[TaskEventListener] Path for shuttle ${shuttleId} (task ${taskId}) deleted from PathCacheService.`);
   }
 }
 

@@ -9,9 +9,10 @@ const plcManager = require('./modules/PLC/plcManager');
 const { plcsConfig } = require('./modules/PLC/configPLC');
 const healthController = require('./controllers/health.controller');
 const {logger} = require('./logger/logger.js')
-const shuttleDispatcherService = require('./modules/SHUTTLE/shuttleDispatcherService'); 
+const shuttleDispatcherService = require('./modules/SHUTTLE/shuttleDispatcherService');
 const taskEventListener = require('./modules/SHUTTLE/taskEventListener');
 const { initializeMqttBroker } = require('./services/mqttService');
+const PathCacheService = require('./modules/SHUTTLE/PathCacheService');
 
 const app = express();
 const server = http.createServer(app);
@@ -36,6 +37,11 @@ async function startServer() {
         // healthController.setInitialized(true);
         // logger.info('[Server] All PLCs initialized successfully!');
 
+        // Initialize 3-Pillar System
+        logger.info('[Server] Initializing 3-Pillar Intelligent Traffic Management System...');
+        await PathCacheService.initialize(); // Pillar 1: Traffic Center with auto-cleanup
+        logger.info('[Server] Pillar 1 (Traffic Center) initialized ✓');
+
         const dispatcher = new shuttleDispatcherService(io);
 
         initializeMqttBroker(io);
@@ -45,11 +51,25 @@ async function startServer() {
         server.listen(PORT, () => {
             logger.info(`Server is running on port ${PORT}!`)
             logger.info(`WebSocket is ready!`)
-            dispatcher.startDispatcher(); 
+            logger.info('[Server] 3-Pillar System fully operational ✓');
+            dispatcher.startDispatcher();
         });
     } catch (error) {
         logger.error('[Server] Failed to start:', error);
     }
 }
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+    logger.info('[Server] Shutting down gracefully...');
+    PathCacheService.stopAutoCleanup();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    logger.info('[Server] SIGTERM received, shutting down...');
+    PathCacheService.stopAutoCleanup();
+    process.exit(0);
+});
 
 startServer();

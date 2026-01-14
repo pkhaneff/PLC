@@ -1,5 +1,6 @@
 const { logger } = require('../../logger/logger');
 const redisClient = require('../../redis/init.redis');
+const cellService = require('./cellService');
 
 /**
  * Service for managing node occupation using Redis.
@@ -24,10 +25,12 @@ class NodeOccupationService {
         try {
             const key = `node:${nodeQr}:occupied_by`;
             await redisClient.set(key, shuttleId, { EX: ttl });
-            logger.debug(`[NodeOccupation] Node ${nodeQr} blocked by shuttle ${shuttleId}`);
+            const nodeName = await cellService.getDisplayNameWithoutFloor(nodeQr);
+            logger.debug(`[NodeOccupation] Node ${nodeName} blocked by shuttle ${shuttleId}`);
             return true;
         } catch (error) {
-            logger.error(`[NodeOccupation] Error blocking node ${nodeQr}:`, error);
+            const nodeName = await cellService.getDisplayNameWithoutFloor(nodeQr);
+            logger.error(`[NodeOccupation] Error blocking node ${nodeName}:`, error);
             return false;
         }
     }
@@ -47,15 +50,18 @@ class NodeOccupationService {
             const currentOccupier = await redisClient.get(key);
 
             if (currentOccupier && currentOccupier !== shuttleId) {
-                logger.warn(`[NodeOccupation] Cannot unblock node ${nodeQr}: occupied by ${currentOccupier}, not ${shuttleId}`);
+                const nodeName = await cellService.getDisplayNameWithoutFloor(nodeQr);
+                logger.warn(`[NodeOccupation] Cannot unblock node ${nodeName}: occupied by ${currentOccupier}, not ${shuttleId}`);
                 return false;
             }
 
             await redisClient.del(key);
-            logger.debug(`[NodeOccupation] Node ${nodeQr} unblocked by shuttle ${shuttleId}`);
+            const nodeName = await cellService.getDisplayNameWithoutFloor(nodeQr);
+            logger.debug(`[NodeOccupation] Node ${nodeName} unblocked by shuttle ${shuttleId}`);
             return true;
         } catch (error) {
-            logger.error(`[NodeOccupation] Error unblocking node ${nodeQr}:`, error);
+            const nodeName = await cellService.getDisplayNameWithoutFloor(nodeQr);
+            logger.error(`[NodeOccupation] Error unblocking node ${nodeName}:`, error);
             return false;
         }
     }
@@ -102,12 +108,14 @@ class NodeOccupationService {
      */
     async handleShuttleMove(shuttleId, oldNodeQr, newNodeQr) {
         try {
-            logger.debug(`[NodeOccupation] Handling move for shuttle ${shuttleId}: ${oldNodeQr} -> ${newNodeQr}`);
+            const oldNodeName = oldNodeQr ? await cellService.getDisplayNameWithoutFloor(oldNodeQr) : 'none';
+            const newNodeName = await cellService.getDisplayNameWithoutFloor(newNodeQr);
+            logger.debug(`[NodeOccupation] Handling move for shuttle ${shuttleId}: ${oldNodeName} -> ${newNodeName}`);
 
             // Block new node first
             const blocked = await this.blockNode(newNodeQr, shuttleId);
             if (!blocked) {
-                logger.error(`[NodeOccupation] Failed to block new node ${newNodeQr} for shuttle ${shuttleId}`);
+                logger.error(`[NodeOccupation] Failed to block new node ${newNodeName} for shuttle ${shuttleId}`);
                 return false;
             }
 
@@ -116,7 +124,7 @@ class NodeOccupationService {
                 await this.unblockNode(oldNodeQr, shuttleId);
             }
 
-            logger.info(`[NodeOccupation] Shuttle ${shuttleId} moved: blocked ${newNodeQr}, unblocked ${oldNodeQr || 'none'}`);
+            logger.info(`[NodeOccupation] Shuttle ${shuttleId} moved: blocked ${newNodeName}, unblocked ${oldNodeName}`);
             return true;
 
         } catch (error) {
@@ -191,10 +199,12 @@ class NodeOccupationService {
         try {
             const key = `node:${nodeQr}:occupied_by`;
             await redisClient.del(key);
-            logger.warn(`[NodeOccupation] Force unblocked node ${nodeQr}`);
+            const nodeName = await cellService.getDisplayNameWithoutFloor(nodeQr);
+            logger.warn(`[NodeOccupation] Force unblocked node ${nodeName}`);
             return true;
         } catch (error) {
-            logger.error(`[NodeOccupation] Error force unblocking node ${nodeQr}:`, error);
+            const nodeName = await cellService.getDisplayNameWithoutFloor(nodeQr);
+            logger.error(`[NodeOccupation] Error force unblocking node ${nodeName}:`, error);
             return false;
         }
     }

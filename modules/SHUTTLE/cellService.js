@@ -7,6 +7,10 @@ const { logger } = require('../../logger/logger');
  * All data access is delegated to the CellRepository.
  */
 class CellService {
+  constructor() {
+    // Cache for cell name lookups: "qrCode:floorId" -> name
+    this.nameCache = new Map();
+  }
 
   // --- Read methods delegated to Repository ---
 
@@ -85,10 +89,96 @@ class CellService {
     return `${cell.name} (QR:${qrCode}, Rack:${cell.rack_name}, Floor:${cell.floor_name})`;
   }
 
+  /**
+   * Get display name for logging (name only, without QR code)
+   * @param {string} qrCode - QR code of the cell
+   * @param {number} floorId - Floor ID
+   * @returns {Promise<string>} Cell name or qrCode as fallback
+   */
+  async getDisplayName(qrCode, floorId) {
+    try {
+      const cell = await this.getCellWithNames(qrCode, floorId);
+      if (!cell || !cell.name) {
+        return qrCode; // Fallback to qrCode
+      }
+      return cell.name; // Return only the name
+    } catch (error) {
+      logger.error(`[CellService] Error getting display name for ${qrCode}:`, error.message);
+      return qrCode; // Fallback on error
+    }
+  }
+
+  /**
+   * Get cached display name for logging (optimized with cache)
+   * @param {string} qrCode - QR code of the cell
+   * @param {number} floorId - Floor ID
+   * @returns {Promise<string>} Cell name or qrCode as fallback
+   */
+  async getCachedDisplayName(qrCode, floorId) {
+    const cacheKey = `${qrCode}:${floorId}`;
+
+    // Check cache
+    if (this.nameCache.has(cacheKey)) {
+      return this.nameCache.get(cacheKey);
+    }
+
+    // Fetch from DB
+    const displayName = await this.getDisplayName(qrCode, floorId);
+
+    // Store in cache
+    this.nameCache.set(cacheKey, displayName);
+
+    return displayName;
+  }
+
+  /**
+   * Get display name without floorId (when floorId is not available)
+   * Slower than getCachedDisplayName but works without floorId
+   * @param {string} qrCode - QR code of the cell
+   * @returns {Promise<string>} Cell name or qrCode as fallback
+   */
+  async getDisplayNameWithoutFloor(qrCode) {
+    try {
+      // Try cache first (any floor)
+      for (const [key, value] of this.nameCache.entries()) {
+        if (key.startsWith(`${qrCode}:`)) {
+          return value;
+        }
+      }
+
+      // Query DB - returns array of cells
+      const cells = await CellRepository.getCellByQrCodeAnyFloor(qrCode);
+      if (!cells || cells.length === 0 || !cells[0].name) {
+        return qrCode;
+      }
+
+      const cell = cells[0]; // Take first match
+
+      // Cache it with floor_id
+      if (cell.floor_id) {
+        const cacheKey = `${qrCode}:${cell.floor_id}`;
+        this.nameCache.set(cacheKey, cell.name);
+      }
+
+      return cell.name;
+    } catch (error) {
+      logger.error(`[CellService] Error getting display name without floor for ${qrCode}:`, error.message);
+      return qrCode;
+    }
+  }
+
+  /**
+   * Clear the name cache (call when cell names are updated)
+   */
+  clearNameCache() {
+    this.nameCache.clear();
+    logger.info('[CellService] Name cache cleared');
+  }
+
   // --- Write methods delegated to Repository ---
 
-  async updateCellHasBox(cellId, hasBox) {
-    return CellRepository.updateCellHasBox(cellId, hasBox);
+  async updateCellHasBox(cellId, hasBox, palletId) {
+    return CellRepository.updateCellHasBox(cellId, hasBox, palletId);
   }
 
   async updateCellBlockStatus(cellId, isBlock) {
@@ -102,6 +192,14 @@ class CellService {
       logger.error(`Error in getCellByCoordinate: ${error.message}`);
       throw error;
     }
+  }
+
+  /**
+   * Get deep info for a cell by its unique QR code.
+   * Resolves floor_id and rack_id automatically.
+   */
+  async getCellDeepInfoByQr(qrCode) {
+    return CellRepository.getCellDeepInfoByQr(qrCode);
   }
 
   // --- End ID Refactoring Methods ---

@@ -5,6 +5,8 @@ const { publishToTopic } = require('../../services/mqttService'); // To publish 
 const cellService = require('./cellService'); // Using the alias NodeService internally
 const { findShortestPath } = require('./pathfinding');
 const ReservationService = require('../COMMON/reservationService'); // Import the new service
+const PathCacheService = require('./PathCacheService'); // Import PathCacheService
+const { TASK_ACTIONS, MQTT_TOPICS, MISSION_CONFIG } = require('../../config/shuttle.config');
 
 const PICKUP_LOCK_TIMEOUT = 300; // 5 minutes, same as endnode for consistency
 
@@ -13,7 +15,67 @@ class ShuttleDispatcherService {
     this.io = io;
     this.dispatchInterval = 5000;
     this.dispatcherTimer = null;
+    this.activeMissions = new Map(); // Track active missions for retry mechanism
     logger.info('[ShuttleDispatcherService] Initialized.');
+  }
+
+  /**
+   * Publishes a mission to a shuttle with automatic retry mechanism
+   * Retries every 500ms for up to 30 seconds if no response is received
+   * @param {string} topic - MQTT topic to publish to
+   * @param {object} payload - Mission payload
+   * @param {string} shuttleId - Shuttle identifier
+   */
+  async publishMissionWithRetry(topic, payload, shuttleId) {
+    const missionId = `${shuttleId}_${Date.now()}`;
+    const startTime = Date.now();
+    let retryCount = 0;
+    let acknowledged = false;
+
+    logger.info(`[ShuttleDispatcherService] Starting mission ${missionId} for shuttle ${shuttleId}`);
+
+    // Initial publish
+    await publishToTopic(topic, payload);
+
+    const retryInterval = setInterval(async () => {
+      // Check if already acknowledged (to avoid unnecessary checks)
+      if (acknowledged) {
+        return;
+      }
+
+      const elapsed = Date.now() - startTime;
+
+      // Check if shuttle has acknowledged (commandComplete should be 0 = IN_PROGRESS)
+      const { getShuttleState } = require('./shuttleStateCache');
+      const shuttleState = await getShuttleState(shuttleId);
+
+      if (shuttleState && shuttleState.commandComplete === 0) {
+        // Shuttle has acknowledged, stop retrying
+        acknowledged = true;
+        logger.info(`[ShuttleDispatcherService] Shuttle ${shuttleId} acknowledged mission ${missionId} after ${retryCount} retries (${elapsed}ms)`);
+        clearInterval(retryInterval);
+        this.activeMissions.delete(missionId);
+        return;
+      }
+
+      // Check timeout
+      if (elapsed >= MISSION_CONFIG.RETRY_TIMEOUT) {
+        logger.error(`[ShuttleDispatcherService] Mission ${missionId} timed out after ${MISSION_CONFIG.RETRY_TIMEOUT}ms. No response from shuttle ${shuttleId}`);
+        clearInterval(retryInterval);
+        this.activeMissions.delete(missionId);
+        // TODO: Handle timeout - maybe mark task as failed, release locks, etc.
+        return;
+      }
+
+      // Publish/retry the mission
+      retryCount++;
+      logger.debug(`[ShuttleDispatcherService] Retrying mission to ${topic} (attempt ${retryCount}, elapsed: ${elapsed}ms)`);
+      await publishToTopic(topic, payload);
+
+    }, MISSION_CONFIG.RETRY_INTERVAL);
+
+    // Store the interval reference for potential cleanup
+    this.activeMissions.set(missionId, { interval: retryInterval, startTime, shuttleId });
   }
 
   // Helper function to calculate Manhattan distance (or similar heuristic)
@@ -46,18 +108,31 @@ class ShuttleDispatcherService {
       // Get coordinates for the task's pickup node (now using QR)
       taskPickupCoords = await cellService.getCellByQrCode(task.pickupNodeQr, task.pickupNodeFloorId);
       if (!taskPickupCoords) {
-        logger.warn(`Task pickupNodeQr ${task.pickupNodeQr} on floor ${task.pickupNodeFloorId} not found in cellService.`);
+        const pickupName = await cellService.getCachedDisplayName(task.pickupNodeQr, task.pickupNodeFloorId);
+        logger.warn(`Task pickupNodeQr ${pickupName} on floor ${task.pickupNodeFloorId} not found in cellService.`);
         return null;
       }
 
       for (const shuttle of idleShuttles) {
         let shuttleCurrentCoords = null;
-        // Use getCellByQrCode since shuttle.current_node is a QR code
-        shuttleCurrentCoords = await cellService.getCellByQrCode(shuttle.current_node, taskPickupCoords.floor_id);
+        // Search globally for the shuttle's current node to handle cases where it might be on a different floor
+        const candidates = await cellService.getCellByQrCodeAnyFloor(shuttle.current_node);
+
+        if (!candidates || candidates.length === 0) {
+          const currentNodeName = await cellService.getDisplayNameWithoutFloor(shuttle.current_node);
+          logger.warn(`Shuttle ${shuttle.id} current_node ${currentNodeName} not found in DB (Any Floor).`);
+          continue;
+        }
+
+        // Use the cell that matches the task's floor, or the first one if we want to check floor mismatch
+        // Ideally, a QR should be unique or we prioritize the one on the target floor.
+        shuttleCurrentCoords = candidates.find(c => c.floor_id === taskPickupCoords.floor_id);
 
         if (!shuttleCurrentCoords) {
-          logger.warn(`Shuttle ${shuttle.id} current_node (QR: ${shuttle.current_node}) not found on floor ${taskPickupCoords.floor_id} in cellService.`);
-          continue; // Skip this shuttle
+          // Shuttle is likely on a different floor
+          const actualFloor = candidates[0].floor_id;
+          logger.debug(`Shuttle ${shuttle.id} is on floor ${actualFloor}, but task is on floor ${taskPickupCoords.floor_id}. Skipping.`);
+          continue;
         }
 
         const distance = await this.calculateDistanceHeuristic(shuttleCurrentCoords, taskPickupCoords);
@@ -105,7 +180,8 @@ class ShuttleDispatcherService {
           isLockAcquired = true;
           logger.info(`[ShuttleDispatcherService] Task ${task.taskId} already owns lock for ${pickupResourceKey}. Proceeding.`);
         } else {
-          logger.warn(`[ShuttleDispatcherService] Pickup node ${task.pickupNodeQr} is locked by ${currentOwner}. Skipping task ${task.taskId} temporarily.`);
+          const pickupName = await cellService.getCachedDisplayName(task.pickupNodeQr, task.pickupNodeFloorId);
+          logger.warn(`[ShuttleDispatcherService] Pickup node ${pickupName} is locked by ${currentOwner}. Skipping task ${task.taskId} temporarily.`);
           // Should we unshift the task or just retry later?
           // Since getNextPendingTask peeks at the top, we are stuck on this task until it can be processed.
           // This simple FIFO logic means we block until the lock is free.
@@ -114,10 +190,11 @@ class ShuttleDispatcherService {
       }
 
       // 3. Find optimal shuttle
-      const allShuttleStates = getAllShuttleStates(); // This is synchronous and fast
+      // CRITICAL FIX: getAllShuttleStates() is now async (reads from Redis)
+      const allShuttleStates = await getAllShuttleStates();
       logger.info(`[DispatcherDebug] All states: ${JSON.stringify(allShuttleStates)}`);
 
-      const idleShuttles = Object.values(allShuttleStates)
+      const idleShuttles = allShuttleStates
         .filter(s => s.shuttleStatus === 8) // 8 = IDLE
         .map(s => ({
           ...s,
@@ -142,24 +219,80 @@ class ShuttleDispatcherService {
 
       // 4. Calculate Path (Shuttle -> Pickup) (QR to QR)
       // optimalShuttle.current_node is QR (mapped above)
-      const fullPath = await findShortestPath(optimalShuttle.current_node, task.pickupNodeQr, task.pickupNodeFloorId);
+
+      // Dynamic Obstacle Avoidance: Get currently occupied nodes
+      const NodeOccupationService = require('./NodeOccupationService');
+      const occupiedMap = await NodeOccupationService.getAllOccupiedNodes();
+      const avoidNodes = Object.keys(occupiedMap).filter(qr =>
+        qr !== optimalShuttle.current_node && // Don't avoid myself
+        qr !== task.pickupNodeQr            // Don't avoid my destination
+      );
+
+      logger.info(`[ShuttleDispatcherService] Planning path for ${optimalShuttle.id} avoiding ${avoidNodes.length} obstacles.`);
+
+
+      // Get all active paths from PathCacheService for traffic awareness
+      const trafficData = await PathCacheService.getAllActivePaths();
+      logger.debug(`[ShuttleDispatcherService] Traffic data for pathfinding: ${JSON.stringify(trafficData.map(t => t.shuttleId))}`);
+
+      logger.info(`[DispatcherDebug] Calling findShortestPath...`);
+      let fullPath = await findShortestPath(
+        optimalShuttle.current_node,
+        task.pickupNodeQr,
+        task.pickupNodeFloorId,
+        {
+          avoid: avoidNodes,
+          isCarrying: false, // Shuttle is empty when going to pickup
+          trafficData: trafficData, // Pass traffic data for proactive avoidance
+          lastStepAction: TASK_ACTIONS.PICK_UP
+        }
+      );
+      logger.info(`[DispatcherDebug] findShortestPath call completed.`);
+
+      // 2. Fallback: If no path found avoiding obstacles, try direct path (ConflictResolution will handle yielding)
+      if (!fullPath) {
+        logger.warn(`[ShuttleDispatcherService] Soft avoidance failed for shuttle ${optimalShuttle.id}. Trying direct path.`);
+        logger.info(`[DispatcherDebug] Calling findShortestPath (fallback)...`);
+        fullPath = await findShortestPath(
+          optimalShuttle.current_node,
+          task.pickupNodeQr,
+          task.pickupNodeFloorId,
+          { 
+            isCarrying: false, // Still empty on fallback
+            trafficData: trafficData, // Pass traffic data for proactive avoidance
+            lastStepAction: TASK_ACTIONS.PICK_UP
+          }
+        );
+        logger.info(`[DispatcherDebug] findShortestPath (fallback) call completed.`);
+      }
 
       if (!fullPath) {
-        logger.error(`[ShuttleDispatcherService] Failed to find path from ${optimalShuttle.current_node} to ${task.pickupNodeQr}`);
+        const fromName = await cellService.getDisplayNameWithoutFloor(optimalShuttle.current_node);
+        const toName = await cellService.getCachedDisplayName(task.pickupNodeQr, task.pickupNodeFloorId);
+        logger.error(`[ShuttleDispatcherService] Failed to find path from ${fromName} to ${toName}`);
         return;
       }
 
+      // Ensure path has steps before saving
+      if (!fullPath || !fullPath.totalStep || fullPath.totalStep === 0) {
+        logger.error(`[ShuttleDispatcherService] Path calculated for task ${task.taskId} has no steps.`);
+        return;
+      }
+
+      // Save the path to PathCacheService (Trụ cột 1)
+      await PathCacheService.savePath(optimalShuttle.id, fullPath);
+      logger.info(`[ShuttleDispatcherService] Path for shuttle ${optimalShuttle.id} (task ${task.taskId}) saved to PathCacheService.`);
+
       const pathSteps = fullPath.steps || fullPath; // Handle path format
 
-      // 5. Send command to Shuttle
-      const commandTopic = `shuttle/command/${optimalShuttle.id}`;
-      const pathPayload = {
-        action: 'move_path',
-        taskId: task.taskId,
-        path: pathSteps,
-        final_destination: task.pickupNodeQr,
-        // Additional info for the shuttle processing
+      // 5. Send mission to Shuttle using new shuttle/sendMission topic
+      const missionTopic = `${MQTT_TOPICS.SEND_MISSION}/${optimalShuttle.id}`;
+
+      const missionPayload = {
+        ...pathSteps,
         meta: {
+          taskId: task.taskId,
+          onArrival: 'PICKUP_COMPLETE',
           step: 'move_to_pickup',
           pickupNodeQr: task.pickupNodeQr,
           endNodeQr: task.endNodeQr,
@@ -167,35 +300,14 @@ class ShuttleDispatcherService {
         }
       };
 
-      // Note: We use pathPayload structure to match what simulator expects (path, taskInfo, onArrival, etc. might be needed)
-      // Simulator expects: { path: [], taskInfo: {}, onArrival: 'EVENT_NAME' } based on previous code snippets?
-      // Wait, let's look at Step 273 lines 156-160:
-      /*
-      const commandPayload = {
-        path: fullPath,
-        onArrival: 'PICKUP_COMPLETE', 
-        taskInfo: task 
-      };
-      */
-      // I should match that structure to be safe with simulator.
-
-      const refinedPayload = {
-        path: pathSteps,
-        onArrival: 'PICKUP_COMPLETE',
-        taskInfo: {
-          ...task,
-          pickupNode: task.pickupNodeQr, // Polyfill for legacy simulator checks if any
-          endNode: task.endNodeQr
-        },
-        taskId: task.taskId
-      };
-
-      await publishToTopic(commandTopic, refinedPayload);
+      await this.publishMissionWithRetry(missionTopic, missionPayload, optimalShuttle.id);
 
       // 6. Update Task Status & Shuttle State
       await shuttleTaskQueueService.updateTaskStatus(task.taskId, 'assigned', optimalShuttle.id);
 
-      logger.info(`[ShuttleDispatcherService] Dispatched task ${task.taskId} to shuttle ${optimalShuttle.id}. Path length: ${pathSteps.length}`);
+      const fromName = await cellService.getDisplayNameWithoutFloor(optimalShuttle.current_node);
+      const toName = await cellService.getCachedDisplayName(task.pickupNodeQr, task.pickupNodeFloorId);
+      logger.info(`[ShuttleDispatcherService] Dispatched task ${task.taskId} to shuttle ${optimalShuttle.id}. Path: ${fromName} -> ${toName} (${pathSteps.length} steps)`);
 
     } catch (error) {
       logger.error('[ShuttleDispatcherService] Error during task dispatch:', error);

@@ -32,9 +32,10 @@ function initializeMqttBroker(io) { // Accept io instance
                 try {
                     const payload = JSON.parse(packet.payload.toString());
                     const shuttleCode = topic.split('/')[2];
-                    
-                    // 1. Update the shuttle's state in the in-memory cache
-                    updateShuttleState(shuttleCode, payload);
+
+                    // CRITICAL FIX: Update shuttle state in Redis (now async)
+                    // This allows all processes to access the same state
+                    await updateShuttleState(shuttleCode, payload);
 
                 } catch (error) {
                     logger.error(`Error parsing MQTT info message from ${client.id}:`, error);

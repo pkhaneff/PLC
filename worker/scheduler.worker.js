@@ -3,6 +3,7 @@ const CellRepository = require('../repository/cell.repository');
 const redisClient = require('../redis/init.redis');
 const shuttleTaskQueueService = require('../modules/SHUTTLE/shuttleTaskQueueService');
 const ReservationService = require('../modules/COMMON/reservationService');
+const cellService = require('../modules/SHUTTLE/cellService');
 
 const SCHEDULER_INTERVAL = 5000;
 const ENDNODE_PAGE_SIZE = 10;
@@ -73,12 +74,19 @@ class Scheduler {
       }
 
       const stagedTask = JSON.parse(stagedTaskJSON);
-      logger.info(`[Scheduler] Popped task from staging queue for pickup: ${stagedTask.pickupNodeQr}`);
+      const pickupName = await cellService.getCachedDisplayName(stagedTask.pickupNodeQr, stagedTask.pickupNodeFloorId);
+      logger.info(`[Scheduler] Popped task from staging queue for pickup: ${pickupName}`);
 
-      // 2. Get a page of available endNodes
-      const candidateNodes = await CellRepository.getAvailableEndNodes(1, ENDNODE_PAGE_SIZE);
+      // 2. Get a page of available endNodes, filtering by palletType if present, AND restricting to the same floor as pickup
+      const candidateNodes = await CellRepository.getAvailableEndNodes(
+        1,
+        ENDNODE_PAGE_SIZE,
+        stagedTask.palletType,
+        stagedTask.pickupNodeFloorId
+      );
+
       if (!candidateNodes || candidateNodes.length === 0) {
-        logger.warn('[Scheduler] No available end-nodes found. Re-queuing task.');
+        logger.warn(`[Scheduler] No available end-nodes found for pallet type '${stagedTask.palletType}' on floor ${stagedTask.pickupNodeFloorId}. Re-queuing task.`);
         await redisClient.lPush(TASK_STAGING_QUEUE_KEY, stagedTaskJSON);
         this.isProcessing = false;
         return;
@@ -96,7 +104,8 @@ class Scheduler {
         const lockAcquired = await ReservationService.acquireLock(resourceKey, ownerId, LOCK_TIMEOUT);
 
         if (lockAcquired) {
-          logger.info(`[Scheduler] Successfully acquired lock for end-node ${node.name} (ID: ${node.id}, QR: ${node.qr_code})`);
+          const endNodeName = await cellService.getCachedDisplayName(node.qr_code, node.floor_id);
+          logger.info(`[Scheduler] Successfully acquired lock for end-node ${endNodeName} (ID: ${node.id})`);
 
           // 4. If lock acquired, register the real task and break loop
           const finalTaskData = {
@@ -105,6 +114,7 @@ class Scheduler {
             endNodeFloorId: node.floor_id,
             endNodeCol: node.col,
             endNodeRow: node.row,
+            palletType: stagedTask.palletType, // Ensure this is persisted
           };
 
           await shuttleTaskQueueService.registerTask(finalTaskData);

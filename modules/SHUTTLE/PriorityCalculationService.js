@@ -31,10 +31,7 @@ class PriorityCalculationService {
             const shuttleState = getShuttleState(shuttleId);
 
             // Determine if carrying cargo
-            // Priority 1: Check taskInfo.isCarrying
-            // Priority 2: Check shuttle state (if available)
             let isCarrying = false;
-
             if (taskInfo && typeof taskInfo.isCarrying === 'boolean') {
                 isCarrying = taskInfo.isCarrying;
             } else if (shuttleState && shuttleState.isCarrying) {
@@ -45,13 +42,16 @@ class PriorityCalculationService {
             const taskId = taskInfo?.taskId || 0;
 
             // Calculate priority components
-            const cargoWeight = isCarrying ? 1000000 : 0;
-            const taskWeight = 999999 - taskId; // Invert: lower taskId = higher priority
-            const waitWeight = Math.min(waitingTime, 9999); // Cap at 9999ms to prevent overflow
+            // 1. Cargo: 1 Billion points
+            const cargoWeight = isCarrying ? 1000000000 : 0;
 
-            const priority = cargoWeight + taskWeight + waitWeight;
+            // 2. Task Order: Inverted TaskID.
+            const taskWeight = 999999 - taskId;
 
-            logger.debug(`[PriorityCalc] Shuttle ${shuttleId}: cargo=${isCarrying}, taskId=${taskId}, wait=${waitingTime}ms → priority=${priority}`);
+            // NO WAITING TIME per user instructions.
+            const priority = cargoWeight + taskWeight;
+
+            logger.debug(`[PriorityCalc] Shuttle ${shuttleId}: cargo=${isCarrying}, taskId=${taskId} → priority=${priority}`);
 
             // Cache in Redis
             await this.updatePriorityInRedis(shuttleId, priority);
@@ -59,7 +59,6 @@ class PriorityCalculationService {
             return priority;
         } catch (error) {
             logger.error(`[PriorityCalc] Error calculating priority for shuttle ${shuttleId}:`, error);
-            // Return default priority on error
             return 0;
         }
     }
