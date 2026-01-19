@@ -8,6 +8,8 @@ const ReservationService = require('../COMMON/reservationService'); // Import th
 const PathCacheService = require('./PathCacheService'); // Import PathCacheService
 const ShuttleCounterService = require('./ShuttleCounterService');
 const { TASK_ACTIONS, MQTT_TOPICS, MISSION_CONFIG } = require('../../config/shuttle.config');
+const { getShuttleState, updateShuttleState } = require('./shuttleStateCache');
+const NodeOccupationService = require('./NodeOccupationService');
 
 const PICKUP_LOCK_TIMEOUT = 300; // 5 minutes, same as endnode for consistency
 
@@ -17,7 +19,6 @@ class ShuttleDispatcherService {
     this.dispatchInterval = 5000;
     this.dispatcherTimer = null;
     this.activeMissions = new Map(); // Track active missions for retry mechanism
-    logger.info('[ShuttleDispatcherService] Initialized.');
   }
 
   /**
@@ -33,7 +34,6 @@ class ShuttleDispatcherService {
     let retryCount = 0;
     let acknowledged = false;
 
-    logger.info(`[ShuttleDispatcherService] Starting mission ${missionId} for shuttle ${shuttleId}`);
 
     // Initial publish
     await publishToTopic(topic, payload);
@@ -46,7 +46,6 @@ class ShuttleDispatcherService {
 
       const elapsed = Date.now() - startTime;
 
-      const { getShuttleState } = require('./shuttleStateCache');
       const shuttleState = await getShuttleState(shuttleId);
 
       // Check for multiple ACK signals:
@@ -60,7 +59,6 @@ class ShuttleDispatcherService {
         // Shuttle has acknowledged or started, stop retrying
         acknowledged = true;
         const reason = isActuallyRunningOurTask ? 'Task ID Match' : (isBusy ? 'Shuttle Busy' : 'Command ACK (0)');
-        logger.info(`[ShuttleDispatcherService] Shuttle ${shuttleId} acknowledged mission ${missionId} (${reason}) after ${retryCount} retries (${elapsed}ms)`);
         clearInterval(retryInterval);
         this.activeMissions.delete(missionId);
         return;
@@ -71,7 +69,7 @@ class ShuttleDispatcherService {
         logger.error(`[ShuttleDispatcherService] Mission ${missionId} timed out after ${MISSION_CONFIG.RETRY_TIMEOUT}ms. No response from shuttle ${shuttleId}`);
         clearInterval(retryInterval);
         this.activeMissions.delete(missionId);
-        // TODO: Handle timeout - maybe mark task as failed, release locks, etc.
+        // Handle timeout - maybe mark task as failed, release locks, etc.
         return;
       }
 
@@ -144,7 +142,6 @@ class ShuttleDispatcherService {
       // Get coordinates for the task's pickup node (now using QR)
       taskPickupCoords = await cellService.getCellByQrCode(task.pickupNodeQr, task.pickupNodeFloorId);
       if (!taskPickupCoords) {
-        const pickupName = await cellService.getCachedDisplayName(task.pickupNodeQr, task.pickupNodeFloorId);
         logger.warn(`Task pickupNodeQr ${pickupName} on floor ${task.pickupNodeFloorId} not found in cellService.`);
         return null;
       }
@@ -160,8 +157,6 @@ class ShuttleDispatcherService {
           continue;
         }
 
-        // Use the cell that matches the task's floor, or the first one if we want to check floor mismatch
-        // Ideally, a QR should be unique or we prioritize the one on the target floor.
         shuttleCurrentCoords = candidates.find(c => c.floor_id === taskPickupCoords.floor_id);
 
         if (!shuttleCurrentCoords) {
@@ -194,7 +189,6 @@ class ShuttleDispatcherService {
     let pickupResourceKey = '';
 
     try {
-      logger.info('[ShuttleDispatcherService] Attempting to dispatch next task...');
 
       // 1. Get the next pending task (FIFO)
       task = await shuttleTaskQueueService.getNextPendingTask();
@@ -202,7 +196,6 @@ class ShuttleDispatcherService {
         logger.debug('[ShuttleDispatcherService] No pending tasks found.');
         return; // No pending tasks
       }
-      logger.info(`[ShuttleDispatcherService] Found pending task: ${task.taskId}`);
 
       // 2. Attempt to lock the pickupNode, or verify we already own the lock
       // Use pickupNodeQr
@@ -214,13 +207,7 @@ class ShuttleDispatcherService {
         const currentOwner = await ReservationService.getLockOwner(pickupResourceKey);
         if (currentOwner === task.taskId) {
           isLockAcquired = true;
-          logger.info(`[ShuttleDispatcherService] Task ${task.taskId} already owns lock for ${pickupResourceKey}. Proceeding.`);
         } else {
-          const pickupName = await cellService.getCachedDisplayName(task.pickupNodeQr, task.pickupNodeFloorId);
-          logger.warn(`[ShuttleDispatcherService] Pickup node ${pickupName} is locked by ${currentOwner}. Skipping task ${task.taskId} temporarily.`);
-          // Should we unshift the task or just retry later?
-          // Since getNextPendingTask peeks at the top, we are stuck on this task until it can be processed.
-          // This simple FIFO logic means we block until the lock is free.
           return;
         }
       }
@@ -228,7 +215,6 @@ class ShuttleDispatcherService {
       // 3. Find optimal shuttle
       // CRITICAL FIX: getAllShuttleStates() is now async (reads from Redis)
       const allShuttleStates = await getAllShuttleStates();
-      logger.info(`[DispatcherDebug] All states: ${JSON.stringify(allShuttleStates)}`);
 
       const idleShuttles = allShuttleStates
         .filter(s => s.shuttleStatus === 8) // 8 = IDLE
@@ -238,24 +224,19 @@ class ShuttleDispatcherService {
           current_node: s.current_node || s.qrCode // Prioritize current_node, fallback to qrCode
         }));
 
-      logger.info(`[DispatcherDebug] Idle shuttles found: ${idleShuttles.length}`);
-
       if (idleShuttles.length === 0) {
         logger.debug('[ShuttleDispatcherService] No idle shuttles available.');
         return;
       }
 
       const optimalShuttle = await this.findOptimalShuttle(task, idleShuttles);
-      logger.info(`[DispatcherDebug] Optimal shuttle: ${optimalShuttle ? optimalShuttle.id : 'null'}`);
 
       if (!optimalShuttle) {
-        logger.info('[ShuttleDispatcherService] No suitable shuttle found (e.g., wrong floor or unreachable).');
         return;
       }
 
       const fromName = await cellService.getDisplayNameWithoutFloor(optimalShuttle.current_node);
       const toName = await cellService.getCachedDisplayName(task.pickupNodeQr, task.pickupNodeFloorId);
-      logger.info(`[ShuttleDispatcherService] Found optimal shuttle ${optimalShuttle.id} for task ${task.taskId}. Path: ${fromName} -> ${toName}`);
 
       // 4. Dispatch task to the chosen shuttle
       return await this.dispatchTaskToShuttle(task, optimalShuttle.id);
@@ -277,7 +258,6 @@ class ShuttleDispatcherService {
    */
   async dispatchTaskToShuttle(task, shuttleId) {
     try {
-      const { getShuttleState } = require('./shuttleStateCache');
       const shuttleState = await getShuttleState(shuttleId);
 
       if (!shuttleState) {
@@ -285,7 +265,6 @@ class ShuttleDispatcherService {
       }
 
       // 1. Calculate Path (Shuttle -> Pickup)
-      const NodeOccupationService = require('./NodeOccupationService');
       const occupiedMap = await NodeOccupationService.getAllOccupiedNodes();
 
       const currentNode = shuttleState.current_node || shuttleState.qrCode;
@@ -294,9 +273,6 @@ class ShuttleDispatcherService {
         qr !== task.pickupNodeQr
       );
 
-      logger.info(`[ShuttleDispatcherService] Planning path for ${shuttleId} to ${task.pickupNodeQr} avoiding ${avoidNodes.length} obstacles.`);
-
-      const PathCacheService = require('./PathCacheService');
       const trafficData = await PathCacheService.getAllActivePaths();
 
       let fullPath = await findShortestPath(
@@ -333,8 +309,7 @@ class ShuttleDispatcherService {
       }
 
       // 2. Save the path
-      const PathCacheServiceModule = require('./PathCacheService');
-      await PathCacheServiceModule.savePath(shuttleId, fullPath);
+      await PathCacheService.savePath(shuttleId, fullPath);
 
       const pathSteps = fullPath.steps || fullPath;
 
@@ -358,10 +333,8 @@ class ShuttleDispatcherService {
       await shuttleTaskQueueService.updateTaskStatus(task.taskId, 'assigned', shuttleId);
 
       // 5. Update shuttle counter
-      const ShuttleCounterService = require('./ShuttleCounterService');
       await ShuttleCounterService.updateCounter();
 
-      logger.info(`[ShuttleDispatcherService] Task ${task.taskId} dispatched to shuttle ${shuttleId}.`);
       return { success: true, taskId: task.taskId };
 
     } catch (error) {
@@ -375,7 +348,6 @@ class ShuttleDispatcherService {
       logger.warn('[ShuttleDispatcherService] Dispatcher is already running.');
       return;
     }
-    logger.info(`[ShuttleDispatcherService] Starting dispatcher with interval: ${this.dispatchInterval / 1000}s`);
     this.dispatcherTimer = setInterval(() => this.dispatchNextTask(), this.dispatchInterval);
   }
 
@@ -383,7 +355,6 @@ class ShuttleDispatcherService {
     if (this.dispatcherTimer) {
       clearInterval(this.dispatcherTimer);
       this.dispatcherTimer = null;
-      logger.info('[ShuttleDispatcherService] Dispatcher stopped.');
     }
   }
 }

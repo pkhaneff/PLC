@@ -91,7 +91,6 @@ class ShuttleTaskQueueService {
         taskId
       );
 
-      console.log(`✓ Shuttle Task ${taskId} registered: ${pickupNodeQr} → ${endNodeQr}, Position: ${position + 1}`);
 
       return {
         taskId,
@@ -261,12 +260,9 @@ class ShuttleTaskQueueService {
         // CRITICAL FIX: Remove from the main pending queue to unblock the dispatcher.
         // Now we can simply use taskId instead of complex JSON matching
         const removeResult = await redisClient.zRem(this.GLOBAL_TASK_QUEUE_KEY, taskId);
-        if (removeResult > 0) {
-          logger.info(`[TaskQueueService] Removed task ${taskId} from global pending queue.`);
-        } else {
+        if (removeResult === 0) {
           logger.warn(`[TaskQueueService] Failed to remove task ${taskId} from global pending queue. Task may not exist in queue.`);
         }
-
       } else if (status === 'completed') {
         // Find assigned shuttle to clear mapping
         const taskDetails = await this.getTaskDetails(taskId);
@@ -276,7 +272,6 @@ class ShuttleTaskQueueService {
 
         await redisClient.sRem(this.PROCESSING_TASKS_KEY, taskId);
         await redisClient.del(taskKey);
-        logger.info(`[TaskQueueService] Task ${taskId} completed and cleared from Redis.`);
 
       } else if (status === 'failed') {
         const taskDetails = await this.getTaskDetails(taskId);
@@ -284,10 +279,8 @@ class ShuttleTaskQueueService {
           await redisClient.del(`shuttle:active_task:${taskDetails.assignedShuttleId}`);
         }
         await redisClient.sRem(this.PROCESSING_TASKS_KEY, taskId);
-        logger.warn(`[TaskQueueService] Task ${taskId} failed. Left details in Redis for inspection.`);
       }
 
-      logger.info(`✓ Shuttle Task ${taskId} status updated to: ${status}`);
       return true;
     } catch (error) {
       logger.error(`Error updating shuttle task ${taskId} status to ${status}:`, error);
@@ -295,14 +288,6 @@ class ShuttleTaskQueueService {
     }
   }
 
-  // ...
-
-  /**
-   * Xóa một task khỏi tất cả các hàng đợi và chi tiết
-   * Chỉ nên gọi khi task đã hoàn thành hoặc thất bại và không cần lưu trữ nữa
-   * @param {string} taskId - ID của nhiệm vụ
-   * @returns {boolean} Success
-   */
   async removeTask(taskId) {
     try {
       // Xóa khỏi processing tasks set
@@ -314,7 +299,6 @@ class ShuttleTaskQueueService {
       // Xóa task details hash
       await redisClient.del(this.getTaskKey(taskId));
 
-      console.log(`✓ Shuttle Task ${taskId} removed from all queues and details`);
       return true;
     } catch (error) {
       console.error('Error removing shuttle task:', error);

@@ -2,7 +2,12 @@ const { logger } = require('../logger/logger');
 const { asyncHandler } = require('../middlewares/error.middleware');
 const cellService = require('../modules/SHUTTLE/cellService');
 const shuttleTaskQueueService = require('../modules/SHUTTLE/shuttleTaskQueueService');
-const redisClient = require('../redis/init.redis'); // Import redis client
+const redisClient = require('../redis/init.redis');
+const { findShortestPath } = require('../modules/SHUTTLE/pathfinding');
+const { getShuttleState } = require('../modules/SHUTTLE/shuttleStateCache');
+const shuttleConfig = require('../config/shuttle.config');
+const CellRepository = require('../repository/cell.repository');
+const shuttleDispatcherService = require('../modules/SHUTTLE/shuttleDispatcherService');
 
 const TASK_STAGING_QUEUE_KEY = 'task:staging_queue';
 const INBOUND_PALLET_QUEUE_KEY = 'shuttle:inbound_pallet_queue';
@@ -11,7 +16,6 @@ class ShuttleController {
 
     // Other methods (findPathSameFloor, etc.) remain unchanged for now
     findPathSameFloor = async (start, end, floor_id) => {
-        const { findShortestPath } = require('../modules/SHUTTLE/pathfinding');
         const listNode = await findShortestPath(start, end, floor_id);
 
         if (!listNode) {
@@ -33,6 +37,72 @@ class ShuttleController {
     });
 
     /**
+     * Kiểm tra xem ID pallet cùng loại đã tồn tại trong hệ thống chưa (hàng đợi hoặc đang xử lý)
+     * @param {string} palletId - ID của pallet cần kiểm tra
+     * @param {string} palletType - Loại pallet
+     * @returns {Promise<boolean>} True nếu bị trùng
+     */
+    checkPalletIdDuplicate = async (palletId, palletType) => {
+        try {
+            // 1. Kiểm tra trong inbound_pallet_queue (Redis List)
+            const inboundQueue = await redisClient.lRange(INBOUND_PALLET_QUEUE_KEY, 0, -1);
+            for (const itemJson of inboundQueue) {
+                const item = JSON.parse(itemJson);
+                if (item.palletId === palletId && item.palletType === palletType) {
+                    logger.warn(`[Controller] Pallet ID duplicate found in inbound queue: ${palletId}`);
+                    return true;
+                }
+            }
+
+            // 2. Kiểm tra trong task:staging_queue (Redis List)
+            const stagingQueue = await redisClient.lRange(TASK_STAGING_QUEUE_KEY, 0, -1);
+            for (const itemJson of stagingQueue) {
+                const item = JSON.parse(itemJson);
+                let id = item.itemInfo;
+                if (typeof item.itemInfo === 'object') {
+                    id = item.itemInfo.id || item.itemInfo.ID || item.itemInfo.palletId;
+                }
+                if (id === palletId && item.palletType === palletType) {
+                    logger.warn(`[Controller] Pallet ID duplicate found in staging queue: ${palletId}`);
+                    return true;
+                }
+            }
+
+            // 3. Kiểm tra các task đang hiện hữu trong Redis (shuttle:task:*)
+            const taskKeys = await redisClient.keys('shuttle:task:*');
+            for (const key of taskKeys) {
+                const task = await redisClient.hGetAll(key);
+                if (task) {
+                    let id = task.itemInfo;
+                    try {
+                        const parsed = JSON.parse(task.itemInfo);
+                        if (typeof parsed === 'object') {
+                            id = parsed.id || parsed.ID || parsed.palletId || id;
+                        }
+                    } catch (e) { /* already a string */ }
+
+                    if (id === palletId && task.palletType === palletType) {
+                        logger.warn(`[Controller] Pallet ID duplicate found in active task info: ${palletId}`);
+                        return true;
+                    }
+                }
+            }
+
+            // 4. Kiểm tra trong database (đã lưu vào cell)
+            const isStored = await CellRepository.isPalletIdExists(palletId, palletType);
+            if (isStored) {
+                logger.warn(`[Controller] Pallet ID duplicate found in database (stored in cell): ${palletId}`);
+                return true;
+            }
+
+            return false;
+        } catch (error) {
+            logger.error(`[Controller] Error checking pallet ID duplicate: ${error.message}`);
+            throw error;
+        }
+    };
+
+    /**
      * Giai đoạn 1: Đăng ký Pallet nhập hàng
      * Nhận thông tin pallet và đưa vào hàng đợi chờ xử lý
      */
@@ -46,6 +116,15 @@ class ShuttleController {
             });
         }
 
+        // Kiểm tra trùng ID
+        const isDuplicate = await this.checkPalletIdDuplicate(pallet_id, pallet_data);
+        if (isDuplicate) {
+            return res.status(409).json({
+                success: false,
+                error: `Pallet ID ${pallet_id} đã tồn tại trong hệ thống (đang chờ xử lý hoặc đã lưu kho)`
+            });
+        }
+
         const inboundData = {
             palletId: pallet_id,
             palletType: pallet_data,
@@ -53,8 +132,6 @@ class ShuttleController {
         };
 
         await redisClient.lPush(INBOUND_PALLET_QUEUE_KEY, JSON.stringify(inboundData));
-
-        logger.info(`[Controller] Pallet ${pallet_id} (${pallet_data}) registered and queued.`);
 
         return res.status(201).json({
             success: true,
@@ -77,7 +154,6 @@ class ShuttleController {
         }
 
         // 1. Kiểm tra trạng thái shuttle
-        const { getShuttleState } = require('../modules/SHUTTLE/shuttleStateCache');
         const shuttleState = await getShuttleState(shuttle_code);
 
         if (!shuttleState) {
@@ -126,11 +202,7 @@ class ShuttleController {
         }
 
         // 3. Khởi tạo nhiệm vụ (Tìm ô trống, khóa ô, và gửi cho dispatcher)
-        // Phần này sẽ gọi đến các logic core của autoMode nhưng nhắm mục tiêu vào 1 shuttle
         try {
-            const shuttleConfig = require('../config/shuttle.config');
-            const CellRepository = require('../repository/cell.repository');
-            const shuttleDispatcherService = require('../modules/SHUTTLE/shuttleDispatcherService');
 
             // Lấy pickup node từ config
             const config = shuttleConfig.warehouses[rackId];
@@ -221,10 +293,8 @@ class ShuttleController {
             });
         }
 
-        // Load configuration
-        const shuttleConfig = require('../config/shuttle.config');
-        const CellRepository = require('../repository/cell.repository');
         const batchIds = [];
+        const errors = [];
 
         for (const request of requestsToProcess) {
             const { rackId, palletType, listItem } = request;
@@ -232,10 +302,29 @@ class ShuttleController {
             // 1. Basic validation
             if (!rackId || !palletType || !listItem || !Array.isArray(listItem) || listItem.length === 0) {
                 logger.warn(`[Controller] Skipping invalid request (Missing rackId, palletType, or listItem): ${JSON.stringify(request)}`);
+                errors.push({ request, error: 'Thiếu rackId, palletType hoặc listItem' });
                 continue;
             }
 
-            // 2. Resolve Pickup Node from Config
+            // 2. Kiểm tra trùng ID cho từng item trong listItem
+            const validItems = [];
+            for (const item of listItem) {
+                const palletId = typeof item === 'object' ? item.id || item.ID || item.palletId : item;
+                const isDuplicate = await this.checkPalletIdDuplicate(palletId, palletType);
+                if (isDuplicate) {
+                    logger.warn(`[Controller] Skipping duplicate pallet ID ${palletId} in autoMode request`);
+                    errors.push({ palletId, error: 'Pallet ID đã tồn tại trong hệ thống' });
+                    continue;
+                }
+                validItems.push(item);
+            }
+
+            if (validItems.length === 0) {
+                logger.warn(`[Controller] All items in request were duplicates or invalid. Skipping request.`);
+                continue;
+            }
+
+            // 3. Resolve Pickup Node from Config
             const config = shuttleConfig.warehouses[rackId];
             if (!config || !config.pickupNodeQr) {
                 logger.warn(`[Controller] No configuration found for Rack ID ${rackId}. Skipping request.`);
@@ -259,8 +348,6 @@ class ShuttleController {
 
             const pickupNodeFloorId = cellInfo.floor_id;
 
-            logger.info(`[Controller] Creating batch for ${listItem.length} items (Rack ${rackId}, Floor ${pickupNodeFloorId})`);
-
             // 4. Create master batch
             const batchId = `batch_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             const masterBatch = {
@@ -269,8 +356,8 @@ class ShuttleController {
                 palletType,
                 pickupNodeQr,
                 pickupNodeFloorId,
-                items: listItem,
-                totalItems: listItem.length,
+                items: validItems,
+                totalItems: validItems.length,
                 processedItems: 0,
                 currentRow: null,
                 status: 'pending',
@@ -286,8 +373,6 @@ class ShuttleController {
             // 4a. Initialize atomic processed items counter
             await redisClient.set(`batch:${batchId}:processed_items`, 0, { EX: 3600 });
 
-            logger.info(`[Controller] Created master batch ${batchId} with ${listItem.length} items`);
-
             // 5. Trigger batch processing
             await this.processBatchRow(batchId);
 
@@ -299,7 +384,8 @@ class ShuttleController {
             message: 'Batches have been created and are being processed.',
             data: {
                 batchIds: batchIds,
-                totalBatches: batchIds.length
+                totalBatches: batchIds.length,
+                errors: errors.length > 0 ? errors : undefined
             }
         });
     });
@@ -310,7 +396,6 @@ class ShuttleController {
      */
     processBatchRow = async (batchId) => {
         try {
-            const CellRepository = require('../repository/cell.repository');
 
             // 1. Lấy master batch
             const masterBatchData = await redisClient.get(`batch:master:${batchId}`);
@@ -329,7 +414,6 @@ class ShuttleController {
                 // Hết item, đánh dấu hoàn thành
                 batch.status = 'completed';
                 await redisClient.set(`batch:master:${batchId}`, JSON.stringify(batch), { EX: 3600 });
-                logger.info(`[Controller] Batch ${batchId} completed`);
                 return;
             }
 
@@ -352,8 +436,6 @@ class ShuttleController {
 
             // 4. So sánh và lấy số lượng item phù hợp
             const itemsToPush = remainingItems.slice(0, Math.min(remainingItems.length, nodeCount));
-
-            logger.info(`[Controller] Batch ${batchId}: Pushing ${itemsToPush.length} tasks to row ${targetRow} (${nodeCount} nodes available)`);
 
             // 5. Push task vào staging queue
             for (const item of itemsToPush) {
@@ -378,8 +460,6 @@ class ShuttleController {
             batch.currentRow = targetRow;
             batch.status = 'processing_row';
             await redisClient.set(`batch:master:${batchId}`, JSON.stringify(batch), { EX: 3600 });
-
-            logger.info(`[Controller] Batch ${batchId}: Pushed ${itemsToPush.length} tasks for row ${targetRow}, row_counter set`);
 
         } catch (error) {
             logger.error(`[Controller] Error processing batch row for ${batchId}:`, error);

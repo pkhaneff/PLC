@@ -10,7 +10,6 @@ class PLCManager {
     }
 
     async initializePLC(plcId, config, tags, options) {
-        logger.info(`[PLCManager] Initializing ${plcId}...`);
 
         plcStateManager.initializePLCState(plcId, { is_active: true });
 
@@ -18,7 +17,6 @@ class PLCManager {
         await reader.start();
 
         this.plcReaders[plcId] = reader;
-        logger.info(`[PLCManager] ${plcId} initialized successfully`);
 
         return reader;
     }
@@ -34,7 +32,6 @@ class PLCManager {
         await Promise.all(initPromises);
 
         this.isInitialized = true;
-        logger.info(`[PLCManager] All ${plcsConfig.length} PLCs initialized successfully!\n`);
     }
 
     getPLCReader(plcId) {
@@ -89,15 +86,12 @@ class PLCManager {
     }
 
     async shutdownAll() {
-        logger.info('\n[PLCManager] Shutting down all PLCs...');
 
         const shutdownPromises = Object.entries(this.plcReaders).map(([plcId, reader]) => {
-            logger.info(`[PLCManager] Shutting down ${plcId}...`);
             return reader.shutdown();
         });
 
         await Promise.all(shutdownPromises);
-        logger.info('[PLCManager] All PLCs shut down successfully');
     }
 
     isPlcConnected(plcId) {

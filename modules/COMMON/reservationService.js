@@ -44,7 +44,6 @@ class ReservationService {
     try {
       const result = await redisClient.del(resourceKey);
       if (result > 0) {
-        logger.info(`[ReservationService] Lock released for resource: ${resourceKey}`);
         return true;
       }
       logger.warn(`[ReservationService] Attempted to release a lock that did not exist or already expired: ${resourceKey}`);

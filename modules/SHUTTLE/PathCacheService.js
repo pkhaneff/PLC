@@ -18,7 +18,6 @@ class PathCacheService {
     async initialize() {
         if (this.isInitialized) return;
 
-        logger.info('[PathCacheService] Initializing with automatic TTL cleanup...');
         this.startAutoCleanup();
         this.isInitialized = true;
     }
@@ -30,7 +29,6 @@ class PathCacheService {
         this.cleanupTimer = setInterval(async () => {
             await this.cleanupStalePaths();
         }, CLEANUP_INTERVAL);
-        logger.info(`[PathCacheService] Auto-cleanup started with ${CLEANUP_INTERVAL}ms interval.`);
     }
 
     /**
@@ -40,7 +38,6 @@ class PathCacheService {
         if (this.cleanupTimer) {
             clearInterval(this.cleanupTimer);
             this.cleanupTimer = null;
-            logger.info('[PathCacheService] Auto-cleanup stopped.');
         }
     }
 
@@ -60,7 +57,6 @@ class PathCacheService {
                     // No metadata means path is stale or corrupted
                     await redisClient.del(key);
                     cleanedCount++;
-                    logger.debug(`[PathCacheService] Cleaned stale path for ${shuttleId} (no metadata)`);
                     continue;
                 }
 
@@ -71,12 +67,7 @@ class PathCacheService {
                 if (age > ttl) {
                     await this.deletePath(shuttleId);
                     cleanedCount++;
-                    logger.debug(`[PathCacheService] Cleaned expired path for ${shuttleId} (age: ${Math.floor(age/1000)}s)`);
                 }
-            }
-
-            if (cleanedCount > 0) {
-                logger.info(`[PathCacheService] Cleanup completed: removed ${cleanedCount} stale path(s)`);
             }
         } catch (error) {
             logger.error('[PathCacheService] Error during cleanup:', error);
@@ -102,27 +93,19 @@ class PathCacheService {
             const metadata = {
                 shuttleId,
                 timestamp: Date.now(),
-                ttl: ttl * 1000, // Convert to ms
+                ttl: ttl * 1000,
                 isCarrying: options.isCarrying || false,
                 priority: options.priority || 0,
                 pathLength: pathObject.totalStep || 0
             };
             await this.savePathMetadata(shuttleId, metadata);
 
-            logger.debug(`[PathCacheService] Path for shuttle ${shuttleId} saved (TTL: ${ttl}s, carrying: ${metadata.isCarrying}).`);
             return true;
         } catch (error) {
             logger.error(`[PathCacheService] Error saving path for ${shuttleId}:`, error);
             return false;
         }
     }
-
-    /**
-     * Save path metadata.
-     * @param {string} shuttleId - The ID of the shuttle.
-     * @param {object} metadata - Metadata object.
-     * @returns {Promise<boolean>}
-     */
     async savePathMetadata(shuttleId, metadata) {
         try {
             const key = `${PATH_METADATA_PREFIX}:${shuttleId}`;
@@ -134,11 +117,6 @@ class PathCacheService {
         }
     }
 
-    /**
-     * Get path metadata.
-     * @param {string} shuttleId - The ID of the shuttle.
-     * @returns {Promise<object|null>}
-     */
     async getPathMetadata(shuttleId) {
         try {
             const key = `${PATH_METADATA_PREFIX}:${shuttleId}`;
@@ -150,11 +128,6 @@ class PathCacheService {
         }
     }
 
-    /**
-     * Retrieves a shuttle's active path from Redis.
-     * @param {string} shuttleId - The ID of the shuttle.
-     * @returns {Promise<object|null>} The path object or null if not found.
-     */
     async getPath(shuttleId) {
         try {
             const key = `${ACTIVE_PATH_PREFIX}:${shuttleId}`;
@@ -166,18 +139,12 @@ class PathCacheService {
         }
     }
 
-    /**
-     * Deletes a shuttle's active path from Redis.
-     * @param {string} shuttleId - The ID of the shuttle.
-     * @returns {Promise<boolean>} True if successful.
-     */
     async deletePath(shuttleId) {
         try {
             const pathKey = `${ACTIVE_PATH_PREFIX}:${shuttleId}`;
             const metadataKey = `${PATH_METADATA_PREFIX}:${shuttleId}`;
             await redisClient.del(pathKey);
             await redisClient.del(metadataKey);
-            logger.debug(`[PathCacheService] Path and metadata for shuttle ${shuttleId} deleted.`);
             return true;
         } catch (error) {
             logger.error(`[PathCacheService] Error deleting path for ${shuttleId}:`, error);
@@ -301,7 +268,6 @@ class PathCacheService {
                 }
             }
 
-            logger.debug(`[PathCacheService] Detected ${corridors.size} traffic flow corridors out of ${nodeTrafficMap.size} active nodes`);
             return corridors;
 
         } catch (error) {

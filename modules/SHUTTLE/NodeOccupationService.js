@@ -124,7 +124,6 @@ class NodeOccupationService {
                 await this.unblockNode(oldNodeQr, shuttleId);
             }
 
-            logger.info(`[NodeOccupation] Shuttle ${shuttleId} moved: blocked ${newNodeName}, unblocked ${oldNodeName}`);
             return true;
 
         } catch (error) {
@@ -154,9 +153,6 @@ class NodeOccupationService {
                 }
             }
 
-            if (clearedCount > 0) {
-                logger.info(`[NodeOccupation] Cleared ${clearedCount} occupied nodes for shuttle ${shuttleId}`);
-            }
 
             return true;
         } catch (error) {

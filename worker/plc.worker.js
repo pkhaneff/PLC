@@ -1,13 +1,11 @@
 const { parentPort, workerData } = require('worker_threads');
-const {logger} = require('../logger/logger')
+const { logger } = require('../logger/logger')
 const { plcId: workerPlcId } = workerData;
 
-logger.info(`[PLCWorker] Worker started for PLC: ${workerPlcId}`);
 
 parentPort.on('message', async (message) => {
     const { taskId, action, data } = message;
 
-    logger.info(`[PLCWorker:${workerPlcId}] Received task ${taskId}, action: ${action}`);
 
     try {
         let result;
@@ -29,7 +27,6 @@ parentPort.on('message', async (message) => {
             timestamp: new Date().toISOString()
         });
 
-        logger.info(`[PLCWorker:${workerPlcId}] Task ${taskId} completed successfully`);
 
     } catch (error) {
         parentPort.postMessage({
@@ -48,7 +45,6 @@ parentPort.on('message', async (message) => {
 async function fetchPLCData(taskData) {
     const { delay = 3000, plcId } = taskData;
 
-    logger.info(`[PLCWorker:${workerPlcId}] Starting fetch data process...`);
 
     await setPLCActive(plcId || workerPlcId, false);
 
@@ -68,7 +64,6 @@ async function fetchPLCData(taskData) {
 
     await setPLCActive(plcId || workerPlcId, true);
 
-    logger.info(`[PLCWorker:${workerPlcId}] Data fetched successfully, total values: ${data.count || 0}`);
 
     return {
         plcId: plcId || workerPlcId,

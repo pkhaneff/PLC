@@ -168,8 +168,6 @@ class RowDirectionManager {
     setInterval(() => {
       this.cleanupStaleLocks();
     }, this.CLEANUP_INTERVAL);
-
-    logger.info('[RowDirectionManager] Cleanup job started');
   }
 }
 

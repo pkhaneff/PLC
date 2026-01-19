@@ -45,7 +45,6 @@ class InitPlc extends EventEmitter {
                     return;
                 }
 
-                logger.info(`[${this.plcId}] Connected successfully`);
 
                 this.conn.setTranslationCB(tag => this.variables[tag] || null);
                 this.conn.addItems(Object.keys(this.variables));
@@ -70,7 +69,6 @@ class InitPlc extends EventEmitter {
 
         return new Promise((resolve) => {
             this.conn.dropConnection(() => {
-                logger.info(`[${this.plcId}] Disconnected`);
                 this.isConnected = false;
                 this.emit('disconnected');
                 resolve();
@@ -138,8 +136,6 @@ class InitPlc extends EventEmitter {
     startPolling() {
         if (this.pollingTimer) return;
 
-        logger.info(`[${this.plcId}] Start polling every ${this.pollingInterval}ms`);
-
         const poll = async () => {
             if (this.isShuttingDown) return;
 
@@ -173,12 +169,10 @@ class InitPlc extends EventEmitter {
     }
 
     async start() {
-        logger.info(`[${this.plcId}] Starting...`);
 
         try {
             await this.connectPlc();
             this.startPolling();
-            logger.info(`[${this.plcId}] Started successfully`);
         } catch (err) {
             logger.error(`[${this.plcId}] Start failed:`, err.message);
             throw err;
@@ -186,7 +180,6 @@ class InitPlc extends EventEmitter {
     }
 
     async shutdown() {
-        logger.info(`[${this.plcId}] Shutting down...`);
 
         this.isShuttingDown = true;
         this.stopPolling();
@@ -197,7 +190,6 @@ class InitPlc extends EventEmitter {
         }
 
         await this.disConnect();
-        logger.info(`[${this.plcId}] Shutdown complete`);
     }
 
     getValue(varName) {

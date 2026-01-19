@@ -23,19 +23,8 @@ const cellService = require('./cellService');
  */
 class BacktrackService {
 
-    /**
-     * Find a safe backtrack node for a shuttle.
-     * 
-     * @param {string} shuttleId - ID of shuttle
-     * @param {object} conflict - Conflict information
-     * @param {string} conflict.conflictNode - QR code of conflict node
-     * @param {number} floorId - Floor ID
-     * @returns {Promise<object|null>} Backtrack result or null
-     */
     async findSafeBacktrackNode(shuttleId, conflict, floorId) {
         try {
-            logger.info(`[Backtrack] Finding safe backtrack node for shuttle ${shuttleId}`);
-
             // Get shuttle state
             const shuttleState = await getShuttleState(shuttleId);
             if (!shuttleState) {
@@ -100,7 +89,6 @@ class BacktrackService {
                 });
 
                 if (parkingNode) {
-                    logger.info(`[Backtrack] Found parking ${parkingNode} from backtrack node ${backtrackNode}`);
                     return {
                         action: 'BACKTRACK_TO_PARKING',
                         backtrackNode,
@@ -110,10 +98,8 @@ class BacktrackService {
                     };
                 }
 
-                // Check if this is a safe waiting point
                 const isSafe = await this.isSafeToWait(backtrackNode, conflict);
                 if (isSafe) {
-                    logger.info(`[Backtrack] Found safe waiting point at ${backtrackNode}`);
                     return {
                         action: 'BACKTRACK_AND_WAIT',
                         backtrackNode,
@@ -134,8 +120,6 @@ class BacktrackService {
 
     async backtrackToNode(shuttleId, targetNode, steps, floorId) {
         try {
-            logger.info(`[Backtrack] Executing backtrack for shuttle ${shuttleId} to ${targetNode} (${steps} steps)`);
-
             // Get shuttle state
             const shuttleState = await getShuttleState(shuttleId);
             if (!shuttleState) {
@@ -182,7 +166,6 @@ class BacktrackService {
             await redisClient.set(`shuttle:${shuttleId}:backtrack_target`, targetNode, { EX: 300 });
             await redisClient.set(`shuttle:${shuttleId}:backtrack_steps`, steps.toString(), { EX: 300 });
 
-            logger.info(`[Backtrack] Backtrack command sent to shuttle ${shuttleId}`);
             return true;
 
         } catch (error) {
@@ -191,48 +174,24 @@ class BacktrackService {
         }
     }
 
-    /**
-     * Check if a node is safe for waiting.
-     * 
-     * A node is safe if:
-     * - Not occupied by another shuttle
-     * - Not in the path of higher priority shuttles
-     * - Not the conflict node itself
-     * 
-     * @param {string} nodeQr - QR code of node
-     * @param {object} conflict - Conflict information
-     * @returns {Promise<boolean>} True if safe
-     */
     async isSafeToWait(nodeQr, conflict) {
         try {
-            // Don't wait at the conflict node
             if (nodeQr === conflict.conflictNode) {
                 return false;
             }
 
-            // Check if node is occupied
             const isOccupied = await this.isNodeOccupied(nodeQr);
             if (isOccupied) {
                 return false;
             }
 
-            // TODO: Check if node is in path of higher priority shuttles
-            // For now, assume it's safe if not occupied
-
             return true;
-
         } catch (error) {
             logger.error(`[Backtrack] Error checking if safe to wait:`, error);
             return false;
         }
     }
 
-    /**
-     * Check if a node is currently occupied.
-     * 
-     * @param {string} nodeQr - QR code of node
-     * @returns {Promise<boolean>} True if occupied
-     */
     async isNodeOccupied(nodeQr) {
         try {
             const key = `node:${nodeQr}:occupied_by`;
@@ -244,12 +203,6 @@ class BacktrackService {
         }
     }
 
-    /**
-     * Clear backtrack state for a shuttle.
-     * 
-     * @param {string} shuttleId - ID of shuttle
-     * @returns {Promise<boolean>} Success status
-     */
     async clearBacktrackState(shuttleId) {
         try {
             await redisClient.del(`shuttle:${shuttleId}:backtrack_target`);
@@ -262,12 +215,6 @@ class BacktrackService {
         }
     }
 
-    /**
-     * Resolve a node to QR code (handles Name inputs)
-     * @param {string} node - QR or Name
-     * @param {number} floorId - Floor ID
-     * @returns {Promise<string|null>} QR code or null
-     */
     async resolveToQr(node, floorId) {
         if (!node) return null;
         // 1. Try as QR first
@@ -291,18 +238,15 @@ class BacktrackService {
                 col = col * 26 + (colStr.charCodeAt(i) - 64); // 'A' is 65
             }
 
-            logger.info(`[Backtrack] Resolving '${node}' as coordinate: Col=${col}, Row=${row}`);
             cell = await cellService.getCellByCoordinate(col, row, floorId);
 
             // Validation: Try 0-based indexing if 1-based failed (e.g. A=0 instead of A=1)
             if (!cell) {
                 const col0 = col - 1;
-                logger.info(`[Backtrack] 1-based lookup failed. Trying 0-based col=${col0} for '${node}'`);
                 cell = await cellService.getCellByCoordinate(col0, row, floorId);
             }
 
             if (cell && cell.qr_code) {
-                logger.info(`[Backtrack] Resolved Coordinate '${node}' to QR: ${cell.qr_code}`);
                 return cell.qr_code;
             }
         }
