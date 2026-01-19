@@ -8,6 +8,9 @@ const { updateShuttleState } = require('./shuttleStateCache');
 const ReservationService = require('../COMMON/reservationService');
 const ConflictResolutionService = require('./ConflictResolutionService');
 const NodeOccupationService = require('./NodeOccupationService');
+const ShuttleCounterService = require('./ShuttleCounterService');
+const RowDirectionManager = require('./RowDirectionManager');
+const RowCoordinationService = require('./RowCoordinationService');
 
 const PathCacheService = require('./PathCacheService'); // Import PathCacheService
 
@@ -145,6 +148,15 @@ class TaskEventListener {
         return;
       }
 
+      // Update shuttle state cache with initial position
+      const { getShuttleState, updateShuttleState } = require('./shuttleStateCache');
+      const currentState = await getShuttleState(shuttleId) || {};
+      await updateShuttleState(shuttleId, {
+        ...currentState,
+        current_node: initialNode,
+        qrCode: initialNode
+      });
+
       // Block initial node where shuttle starts
       await NodeOccupationService.blockNode(initialNode, shuttleId);
       const nodeName = await cellService.getDisplayNameWithoutFloor(initialNode);
@@ -163,6 +175,16 @@ class TaskEventListener {
         logger.warn(`[TaskEventListener] shuttle-moved event missing currentNode for shuttle ${shuttleId}`);
         return;
       }
+
+      // CRITICAL: Update shuttle state cache with new position
+      const { getShuttleState, updateShuttleState } = require('./shuttleStateCache');
+      const currentState = await getShuttleState(shuttleId) || {};
+      await updateShuttleState(shuttleId, {
+        ...currentState,
+        current_node: currentNode,
+        qrCode: currentNode
+      });
+      logger.debug(`[TaskEventListener] Updated shuttle ${shuttleId} position to ${currentNode}`);
 
       // Update node occupation: block new node, unblock old node
       await NodeOccupationService.handleShuttleMove(shuttleId, previousNode, currentNode);
@@ -230,8 +252,8 @@ class TaskEventListener {
 
         // Idea 1: Proactively trigger dispatcher after lock release
         if (this.dispatcher) {
-            logger.info(`[TaskEventListener] Proactively triggering next dispatch cycle after pickup lock release.`);
-            setTimeout(() => this.dispatcher.dispatchNextTask(), 1000); // 1-second delay
+          logger.info(`[TaskEventListener] Proactively triggering next dispatch cycle after pickup lock release.`);
+          setTimeout(() => this.dispatcher.dispatchNextTask(), 1000); // 1-second delay
         }
       }
       // --- End 2-Stage Sequential Logic ---
@@ -281,17 +303,135 @@ class TaskEventListener {
     const trafficData = await PathCacheService.getAllActivePaths();
     logger.debug(`[TaskEventListener] Traffic data for pathfinding: ${JSON.stringify(trafficData.map(t => t.shuttleId))}`);
 
+    // Check if one-way mode is active
+    const activeShuttleCount = await ShuttleCounterService.updateCounter();
+    let enforceOneWay = activeShuttleCount >= 2;
+
+    // Safety: Nếu có batchId thì chắc chắn là nhiều shuttle đang phối hợp trong batch, ép buộc bật one-way
+    if (taskDetails.batchId) {
+      enforceOneWay = true;
+    }
+
+    logger.info(`[TaskEventListener] Active shuttles: ${activeShuttleCount}, One-way mode: ${enforceOneWay}`);
+
+    // === ROW COORDINATION LOGIC ===
+    // Khi có ≥2 shuttle, phối hợp để tất cả shuttle dùng cùng một hàng
+    let targetRow = null;
+    let actualEndNodeQr = endNodeQr; // Có thể thay đổi nếu endNode không nằm trong assigned row
+
+    if (enforceOneWay) {
+      // Kiểm tra xem task có batchId không
+      const batchId = taskDetails.batchId;
+
+      if (batchId) {
+        // Có batchId - sử dụng row coordination
+        targetRow = await RowCoordinationService.assignRowForBatch(batchId, endNodeQr, endNodeFloorId);
+
+        if (!targetRow) {
+          logger.error(`[TaskEventListener] Cannot assign row for batch ${batchId}. Marking task as failed.`);
+          await shuttleTaskQueueService.updateTaskStatus(taskId, 'failed');
+          return;
+        }
+
+        // Kiểm tra xem endNode có nằm trong assigned row không
+        const isEndNodeInRow = await RowCoordinationService.isNodeInAssignedRow(endNodeQr, endNodeFloorId, targetRow);
+
+        if (!isEndNodeInRow) {
+          // endNode không nằm trong assigned row, tìm node gần nhất trong row đó
+          logger.warn(`[TaskEventListener] EndNode ${endName} không nằm trong assigned row ${targetRow}. Tìm node thay thế...`);
+
+          const nearestNode = await RowCoordinationService.findNearestNodeInRow(pickupNodeQr, targetRow, endNodeFloorId);
+
+          if (!nearestNode) {
+            logger.error(`[TaskEventListener] Cannot find available node in assigned row ${targetRow}. Marking task as failed.`);
+            await shuttleTaskQueueService.updateTaskStatus(taskId, 'failed');
+            return;
+          }
+
+          actualEndNodeQr = nearestNode;
+          const nearestName = await cellService.getCachedDisplayName(nearestNode, endNodeFloorId);
+          logger.info(`[TaskEventListener] ✅ Sử dụng node thay thế ${nearestName} trong row ${targetRow}`);
+        }
+
+        logger.info(`[TaskEventListener] Batch ${batchId} - Shuttle ${shuttleId} sẽ đi vào row ${targetRow}`);
+
+      } else {
+        // Không có batchId - dùng row của endNode trực tiếp (single shuttle mode)
+        const endNodeCell = await cellService.getCellByQrCode(endNodeQr, endNodeFloorId);
+        if (endNodeCell) {
+          targetRow = endNodeCell.row;
+          logger.info(`[TaskEventListener] No batchId - using endNode row ${targetRow} directly`);
+        }
+      }
+    } else {
+      // Chế độ single shuttle - dùng row của endNode
+      const endNodeCell = await cellService.getCellByQrCode(endNodeQr, endNodeFloorId);
+      if (endNodeCell) {
+        targetRow = endNodeCell.row;
+      }
+    }
+
+    // Lock row direction if one-way is active
+    let requiredDirection = null;
+    if (enforceOneWay && targetRow !== null) {
+      // Check if row already has a direction lock
+      requiredDirection = await RowDirectionManager.getRowDirection(targetRow, endNodeFloorId);
+
+      if (!requiredDirection) {
+        // Tự động xác định hướng dựa trên vị trí pickup và endNode
+        // Giả định: Hướng đi VÀO (IN) là từ phía có col cao/thấp hơn tùy vào vị trí layout
+        try {
+          const pickupCell = await cellService.getCellByQrCode(pickupNodeQr, endNodeFloorId);
+          const endCell = await cellService.getCellByQrCode(actualEndNodeQr, endNodeFloorId);
+
+          if (pickupCell && endCell) {
+            // Nếu đích (endNode) có col nhỏ hơn pickup (đi từ phải sang trái)
+            if (endCell.col < pickupCell.col) {
+              requiredDirection = 2; // RIGHT_TO_LEFT
+            } else {
+              requiredDirection = 1; // LEFT_TO_RIGHT
+            }
+            logger.info(`[TaskEventListener] Dynamically determined direction ${requiredDirection === 1 ? 'LEFT_TO_RIGHT' : 'RIGHT_TO_LEFT'} for row ${targetRow} (based on path ${pickupNodeQr} -> ${actualEndNodeQr})`);
+          } else {
+            requiredDirection = 1; // Fallback
+          }
+        } catch (e) {
+          requiredDirection = 1; // Fallback
+        }
+      } else {
+        logger.info(`[TaskEventListener] Row ${targetRow} already locked with direction ${requiredDirection === 1 ? 'LEFT_TO_RIGHT' : 'RIGHT_TO_LEFT'}`);
+      }
+
+      // Try to lock the row direction
+      const locked = await RowDirectionManager.lockRowDirection(
+        targetRow,
+        endNodeFloorId,
+        requiredDirection,
+        shuttleId
+      );
+
+      if (!locked) {
+        // Cannot lock - row has opposite direction traffic
+        logger.error(`[TaskEventListener] Cannot lock row ${targetRow} for shuttle ${shuttleId}. Row has opposite traffic direction. Marking task as failed.`);
+        await shuttleTaskQueueService.updateTaskStatus(taskId, 'failed');
+        return;
+      }
+    }
+
     // 1. Try to find path avoiding obstacles with DROP_OFF action at destination
     const { TASK_ACTIONS } = require('../../config/shuttle.config');
     let path2 = await findShortestPath(
       pickupNodeQr,
-      endNodeQr,
+      actualEndNodeQr,
       endNodeFloorId,
       {
         avoid: avoidNodes,
         isCarrying: true, // Shuttle is now carrying cargo
         trafficData: trafficData, // Pass traffic data for proactive avoidance
-        lastStepAction: TASK_ACTIONS.DROP_OFF
+        lastStepAction: TASK_ACTIONS.DROP_OFF,
+        enforceOneWay: enforceOneWay,
+        targetRow: targetRow,
+        requiredDirection: requiredDirection
       }
     );
 
@@ -301,13 +441,16 @@ class TaskEventListener {
       // Pass avoid: [] to EXPLICITLY disable auto-injection of dynamic obstacles in the fallback
       path2 = await findShortestPath(
         pickupNodeQr,
-        endNodeQr,
+        actualEndNodeQr,
         endNodeFloorId,
         {
           avoid: [],
           isCarrying: true, // Still carrying on fallback
           trafficData: trafficData, // Pass traffic data for proactive avoidance
-          lastStepAction: TASK_ACTIONS.DROP_OFF
+          lastStepAction: TASK_ACTIONS.DROP_OFF,
+          enforceOneWay: enforceOneWay,
+          targetRow: targetRow,
+          requiredDirection: requiredDirection
         }
       );
     }
@@ -350,7 +493,7 @@ class TaskEventListener {
         onArrival: 'TASK_COMPLETE',
         step: 'move_to_end',
         pickupNodeQr: pickupNodeQr,
-        endNodeQr: endNodeQr,
+        endNodeQr: actualEndNodeQr, // Use actualEndNodeQr from row coordination
         itemInfo: taskDetails.itemInfo
       }
     };
@@ -405,13 +548,100 @@ class TaskEventListener {
     const endNodeName = await cellService.getCachedDisplayName(taskDetails.endNodeQr, taskDetails.endNodeFloorId);
     logger.info(`[TaskEventListener] Task ${taskId} successfully completed by shuttle ${shuttleId} at ${endNodeName}.`);
 
+    // 4a. ROW COMPLETION DETECTION (New batch/row management logic)
+    const redisClient = require('../../redis/init.redis');
+    const CellRepository = require('../../repository/cell.repository');
+
+    const batchId = taskDetails.batchId;
+    const targetRow = taskDetails.targetRow;
+    const targetFloor = taskDetails.targetFloor;
+
+    if (batchId && targetRow !== undefined && targetFloor !== undefined) {
+      try {
+        // i. Update node status with item_ID
+        const itemId = typeof taskDetails.itemInfo === 'object'
+          ? (taskDetails.itemInfo.ID || taskDetails.itemInfo.id || JSON.stringify(taskDetails.itemInfo))
+          : taskDetails.itemInfo;
+
+        await CellRepository.updateNodeStatus(taskDetails.endNodeQr, { item_ID: itemId });
+        logger.info(`[TaskEventListener] Updated node ${taskDetails.endNodeQr} with item_ID: ${itemId}`);
+
+        // ii. Increment total processed items atomic counter
+        const totalProcessedKey = `batch:${batchId}:processed_items`;
+        const currentTotalProcessed = await redisClient.incr(totalProcessedKey);
+        logger.info(`[TaskEventListener] Incremented total processed items for batch ${batchId}. Total: ${currentTotalProcessed}`);
+
+        // iii. Decrement row counter
+        const counterKey = `batch:${batchId}:row_counter`;
+        const remainingInRow = await redisClient.decr(counterKey);
+        logger.info(`[TaskEventListener] Decremented row_counter for batch ${batchId}. Remaining in row: ${remainingInRow}`);
+
+        // iv. Check if row is full (row counter reached 0)
+        if (remainingInRow <= 0) {
+          logger.info(`[TaskEventListener] 🎯 Row ${targetRow} is now FULL for batch ${batchId}. Processing next row...`);
+
+          // v. Update master batch processedItems using the atomic total
+          const masterBatchKey = `batch:master:${batchId}`;
+          const masterBatchData = await redisClient.get(masterBatchKey);
+
+          if (masterBatchData) {
+            const batch = JSON.parse(masterBatchData);
+
+            // Sync with atomic counter
+            batch.processedItems = parseInt(currentTotalProcessed, 10);
+            batch.currentRow = null; // Clear current row
+            batch.status = 'pending'; // Reset to pending for next row
+
+            await redisClient.set(masterBatchKey, JSON.stringify(batch), { EX: 3600 });
+            logger.info(`[TaskEventListener] Updated master batch ${batchId}: processedItems = ${batch.processedItems}/${batch.totalItems}`);
+
+            // v. Clear row direction lock
+            await RowDirectionManager.clearRowDirectionLock(targetRow, targetFloor);
+            logger.info(`[TaskEventListener] Cleared direction lock for row ${targetRow} (floor ${targetFloor})`);
+
+            // vi. Trigger next row processing
+            const controller = require('../../controllers/shuttle.controller');
+            await controller.processBatchRow(batchId);
+            logger.info(`[TaskEventListener] Triggered processBatchRow for batch ${batchId}`);
+
+          } else {
+            logger.warn(`[TaskEventListener] Master batch ${batchId} not found in Redis`);
+          }
+
+          // vii. Clean up row counter
+          await redisClient.del(counterKey);
+        }
+
+      } catch (rowError) {
+        logger.error(`[TaskEventListener] Error in row completion detection for batch ${batchId}:`, rowError);
+      }
+    }
+
+    // 4b. Release row direction lock for this shuttle
+    if (targetRow !== undefined && targetFloor !== undefined) {
+      try {
+        await RowDirectionManager.releaseShuttleFromRow(targetRow, targetFloor, shuttleId);
+        logger.info(`[TaskEventListener] Released shuttle ${shuttleId} from row ${targetRow} direction lock`);
+      } catch (releaseError) {
+        logger.error(`[TaskEventListener] Error releasing row direction lock for shuttle ${shuttleId}:`, releaseError);
+      }
+    }
+
+    // 4c. Update shuttle counter
+    try {
+      await ShuttleCounterService.updateCounter();
+      logger.debug(`[TaskEventListener] Updated shuttle counter after task completion`);
+    } catch (counterError) {
+      logger.error(`[TaskEventListener] Error updating shuttle counter:`, counterError);
+    }
+
     // 5. Keep node occupation - shuttle is still physically at this node
     // The node will be unblocked automatically when shuttle moves to next task
     logger.debug(`[TaskEventListener] Shuttle ${shuttleId} remains at current node, keeping occupation`);
 
     // 6. Force update shuttle status to IDLE (8) in Redis so Dispatcher can pick it up immediately
     // CRITICAL FIX: getShuttleState() is now async (reads from Redis)
-    const { getShuttleState } = require('./shuttleStateCache');
+    const { getShuttleState, updateShuttleState } = require('./shuttleStateCache');
     const currentState = await getShuttleState(shuttleId) || {};
     await updateShuttleState(shuttleId, {
       ...currentState,
@@ -419,9 +649,11 @@ class TaskEventListener {
       packageStatus: 0, // No longer carrying
       isCarrying: false,
       current_node: taskDetails.endNodeQr, // Update current node to end node QR
-      qrCode: taskDetails.endNodeQr     // Ensure consistency
+      qrCode: taskDetails.endNodeQr,     // Ensure consistency
+      taskId: '', // Clear taskId
+      targetQr: '' // Clear targetQr
     });
-    logger.info(`[TaskEventListener] Force updated shuttle ${shuttleId} status to IDLE (8) in Redis.`);
+    logger.info(`[TaskEventListener] Force updated shuttle ${shuttleId} status to IDLE (8) at ${taskDetails.endNodeQr} in Redis.`);
 
     // 7. Proactively trigger the next dispatch cycle after a short delay
     if (this.dispatcher) {

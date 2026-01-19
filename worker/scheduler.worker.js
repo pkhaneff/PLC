@@ -77,55 +77,146 @@ class Scheduler {
       const pickupName = await cellService.getCachedDisplayName(stagedTask.pickupNodeQr, stagedTask.pickupNodeFloorId);
       logger.info(`[Scheduler] Popped task from staging queue for pickup: ${pickupName}`);
 
-      // 2. Get a page of available endNodes, filtering by palletType if present, AND restricting to the same floor as pickup
-      const candidateNodes = await CellRepository.getAvailableEndNodes(
-        1,
-        ENDNODE_PAGE_SIZE,
-        stagedTask.palletType,
-        stagedTask.pickupNodeFloorId
-      );
+      // === ROW COORDINATION LOGIC ===
+      // Xác định targetRow dựa trên batch coordination khi có nhiều shuttle
+      const ShuttleCounterService = require('../modules/SHUTTLE/ShuttleCounterService');
+      const RowCoordinationService = require('../modules/SHUTTLE/RowCoordinationService');
 
-      if (!candidateNodes || candidateNodes.length === 0) {
-        logger.warn(`[Scheduler] No available end-nodes found for pallet type '${stagedTask.palletType}' on floor ${stagedTask.pickupNodeFloorId}. Re-queuing task.`);
+      const activeShuttleCount = await ShuttleCounterService.getCount();
+      const enforceRowCoordination = activeShuttleCount >= 2;
+
+      let targetRow = stagedTask.targetRow; // Có thể đã được set từ trước
+      let targetFloor = stagedTask.targetFloor || stagedTask.pickupNodeFloorId;
+      let batchId = stagedTask.batchId;
+
+      if (enforceRowCoordination) {
+        // Tạo/lấy batchId dựa trên pickup area
+        const batchKey = `batch:pickup:${stagedTask.pickupNodeQr}`;
+        batchId = await redisClient.get(batchKey);
+
+        if (!batchId) {
+          batchId = `batch_${stagedTask.pickupNodeQr}_${Date.now()}`;
+          await redisClient.set(batchKey, batchId, { EX: 3600 });
+          logger.info(`[Scheduler] ✅ Created new batchId ${batchId} for pickup ${pickupName}`);
+        } else {
+          logger.info(`[Scheduler] Using existing batchId ${batchId} for pickup ${pickupName}`);
+        }
+
+        // Nếu chưa có targetRow, cần xác định row cho batch
+        if (!targetRow) {
+          // Tìm row khả dụng đầu tiên (FIFO)
+          const availableNodes = await CellRepository.findAvailableNodesByFIFO(
+            stagedTask.palletType,
+            targetFloor
+          );
+
+          if (!availableNodes || availableNodes.length === 0) {
+            logger.warn(`[Scheduler] No available nodes for palletType ${stagedTask.palletType}. Re-queuing.`);
+            await redisClient.lPush(TASK_STAGING_QUEUE_KEY, stagedTaskJSON);
+            this.isProcessing = false;
+            return;
+          }
+
+          // Lấy row của node đầu tiên làm targetRow
+          const firstAvailableRow = availableNodes[0].row;
+
+          // Gán row cho batch
+          targetRow = await RowCoordinationService.assignRowForBatch(
+            batchId,
+            availableNodes[0].qr_code, // Dùng QR của node đầu tiên
+            targetFloor
+          );
+
+          if (!targetRow) {
+            targetRow = firstAvailableRow; // Fallback
+          }
+
+          logger.info(`[Scheduler] 🎯 Batch ${batchId} assigned to row ${targetRow}`);
+        } else {
+          // Đã có targetRow (từ batch trước đó), verify với RowCoordinationService
+          const assignedRow = await RowCoordinationService.getAssignedRow(batchId);
+          if (assignedRow && assignedRow !== targetRow) {
+            logger.warn(`[Scheduler] Task has targetRow ${targetRow} but batch ${batchId} is assigned to row ${assignedRow}. Using batch row.`);
+            targetRow = assignedRow;
+          }
+        }
+      } else {
+        // Single shuttle mode - dùng FIFO row nếu chưa có targetRow
+        if (!targetRow) {
+          const availableNodes = await CellRepository.findAvailableNodesByFIFO(
+            stagedTask.palletType,
+            targetFloor
+          );
+
+          if (!availableNodes || availableNodes.length === 0) {
+            logger.warn(`[Scheduler] No available nodes for palletType ${stagedTask.palletType}. Re-queuing.`);
+            await redisClient.lPush(TASK_STAGING_QUEUE_KEY, stagedTaskJSON);
+            this.isProcessing = false;
+            return;
+          }
+
+          targetRow = availableNodes[0].row;
+          logger.info(`[Scheduler] Single shuttle mode - using FIFO row ${targetRow}`);
+        }
+      }
+
+      // 2. Query endNode CHỈ trong targetRow (row-aware)
+      if (!targetRow || !targetFloor) {
+        logger.error(`[Scheduler] Task missing targetRow or targetFloor metadata. Re-queuing.`);
         await redisClient.lPush(TASK_STAGING_QUEUE_KEY, stagedTaskJSON);
         this.isProcessing = false;
         return;
       }
 
-      logger.debug(`[Scheduler] Found ${candidateNodes.length} candidate end-nodes. Attempting to lock one...`);
+      const candidateNodes = await CellRepository.getAvailableNodesInRow(
+        targetFloor,
+        targetRow,
+        stagedTask.palletType
+      );
+
+      if (!candidateNodes || candidateNodes.length === 0) {
+        logger.warn(`[Scheduler] No available nodes in row ${targetRow} (floor ${targetFloor}). Re-queuing task.`);
+        await redisClient.lPush(TASK_STAGING_QUEUE_KEY, stagedTaskJSON);
+        this.isProcessing = false;
+        return;
+      }
+
+      logger.debug(`[Scheduler] Found ${candidateNodes.length} candidate nodes in row ${targetRow}. Attempting to lock one...`);
 
       let isLockAcquired = false;
-      // 3. Loop through candidateNodes and try to acquire lock
+      // 3. Loop through candidateNodes and try to acquire lock (từ trái qua phải)
       for (const node of candidateNodes) {
         const resourceKey = `endnode:lock:${node.id}`;
-        // Use pickupNodeQr in ownerId
         const ownerId = `task_for_${stagedTask.pickupNodeQr}_${stagedTask.itemInfo.ID || ''}`;
 
         const lockAcquired = await ReservationService.acquireLock(resourceKey, ownerId, LOCK_TIMEOUT);
 
         if (lockAcquired) {
           const endNodeName = await cellService.getCachedDisplayName(node.qr_code, node.floor_id);
-          logger.info(`[Scheduler] Successfully acquired lock for end-node ${endNodeName} (ID: ${node.id})`);
+          logger.info(`[Scheduler] Successfully acquired lock for end-node ${endNodeName} (row ${targetRow}, col ${node.col})`);
 
           // 4. If lock acquired, register the real task and break loop
           const finalTaskData = {
             ...stagedTask,
-            endNodeQr: node.qr_code, // Use QR code
+            batchId: batchId, // Add batchId for coordination
+            endNodeQr: node.qr_code,
             endNodeFloorId: node.floor_id,
             endNodeCol: node.col,
             endNodeRow: node.row,
-            palletType: stagedTask.palletType, // Ensure this is persisted
+            palletType: stagedTask.palletType,
+            targetRow: targetRow, // Preserve metadata
+            targetFloor: targetFloor
           };
 
           await shuttleTaskQueueService.registerTask(finalTaskData);
           isLockAcquired = true;
-          break; // Exit the loop once one task is scheduled
+          break;
         }
       }
 
       if (!isLockAcquired) {
         // If no node could be locked, push the task back to the front of the queue
-        logger.warn('[Scheduler] All candidate end-nodes were locked. Re-queuing task.');
+        logger.warn(`[Scheduler] All nodes in row ${targetRow} were locked. Re-queuing task.`);
         await redisClient.lPush(TASK_STAGING_QUEUE_KEY, stagedTaskJSON);
       }
 

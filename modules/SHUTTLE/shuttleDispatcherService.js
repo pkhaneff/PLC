@@ -6,6 +6,7 @@ const cellService = require('./cellService'); // Using the alias NodeService int
 const { findShortestPath } = require('./pathfinding');
 const ReservationService = require('../COMMON/reservationService'); // Import the new service
 const PathCacheService = require('./PathCacheService'); // Import PathCacheService
+const ShuttleCounterService = require('./ShuttleCounterService');
 const { TASK_ACTIONS, MQTT_TOPICS, MISSION_CONFIG } = require('../../config/shuttle.config');
 
 const PICKUP_LOCK_TIMEOUT = 300; // 5 minutes, same as endnode for consistency
@@ -45,14 +46,21 @@ class ShuttleDispatcherService {
 
       const elapsed = Date.now() - startTime;
 
-      // Check if shuttle has acknowledged (commandComplete should be 0 = IN_PROGRESS)
       const { getShuttleState } = require('./shuttleStateCache');
       const shuttleState = await getShuttleState(shuttleId);
 
-      if (shuttleState && shuttleState.commandComplete === 0) {
-        // Shuttle has acknowledged, stop retrying
+      // Check for multiple ACK signals:
+      // 1. commandComplete === 0 (standard MQTT ACK)
+      // 2. OR shuttle is no longer IDLE (8) AND it's executing OUR task (taskId match)
+      const targetTaskId = payload.meta ? payload.meta.taskId : null;
+      const isActuallyRunningOurTask = targetTaskId && shuttleState && shuttleState.taskId === targetTaskId;
+      const isBusy = shuttleState && shuttleState.shuttleStatus !== 8;
+
+      if (shuttleState && (shuttleState.commandComplete === 0 || isActuallyRunningOurTask || isBusy)) {
+        // Shuttle has acknowledged or started, stop retrying
         acknowledged = true;
-        logger.info(`[ShuttleDispatcherService] Shuttle ${shuttleId} acknowledged mission ${missionId} after ${retryCount} retries (${elapsed}ms)`);
+        const reason = isActuallyRunningOurTask ? 'Task ID Match' : (isBusy ? 'Shuttle Busy' : 'Command ACK (0)');
+        logger.info(`[ShuttleDispatcherService] Shuttle ${shuttleId} acknowledged mission ${missionId} (${reason}) after ${retryCount} retries (${elapsed}ms)`);
         clearInterval(retryInterval);
         this.activeMissions.delete(missionId);
         return;
@@ -93,6 +101,34 @@ class ShuttleDispatcherService {
     }
 
     return Math.abs(col1 - col2) + Math.abs(row1 - row2);
+  }
+
+  /**
+   * Xác định row traffic direction dựa trên pickup node và end node
+   * Logic: Direction được xác định bởi movement TRONG row từ pickup → end
+   * @returns {number} Direction code (1=LEFT_TO_RIGHT, 2=RIGHT_TO_LEFT)
+   */
+  async determineRowTrafficDirection(startQr, pickupQr, floorId, targetRow) {
+    try {
+      // Lấy thông tin pickup node (đây là điểm vào row từ T-column)
+      const pickupCell = await cellService.getCellByQrCode(pickupQr, floorId);
+
+      if (!pickupCell) {
+        return 1; // Default: LEFT_TO_RIGHT
+      }
+
+      // Pickup node thường ở T-column (cột trái nhất)
+      // Direction được xác định bởi: Từ pickup node, shuttle sẽ đi sang phải (LEFT_TO_RIGHT)
+      // vì tất cả storage nodes đều ở bên phải pickup node
+
+      // CRITICAL: Luôn luôn return LEFT_TO_RIGHT vì pickup node luôn ở bên trái cùng
+      // Tất cả shuttle đều vào từ pickup node và đi sang phải vào storage area
+      return 1; // LEFT_TO_RIGHT
+
+    } catch (error) {
+      logger.error('[ShuttleDispatcherService] Error determining row traffic direction:', error);
+      return 1; // Default: LEFT_TO_RIGHT
+    }
   }
 
   async findOptimalShuttle(task, idleShuttles) {
@@ -199,7 +235,7 @@ class ShuttleDispatcherService {
         .map(s => ({
           ...s,
           id: s.no || s.id, // Ensure ID is present
-          current_node: s.qrCode // Map qrCode to current_node for consistency
+          current_node: s.current_node || s.qrCode // Prioritize current_node, fallback to qrCode
         }));
 
       logger.info(`[DispatcherDebug] Idle shuttles found: ${idleShuttles.length}`);
@@ -217,21 +253,18 @@ class ShuttleDispatcherService {
         return;
       }
 
-      // 4. Calculate Path (Shuttle -> Pickup) (QR to QR)
-      // optimalShuttle.current_node is QR (mapped above)
-
-      // Dynamic Obstacle Avoidance: Get currently occupied nodes
+      // 4. Calculate Path (Shuttle -> Pickup)
+      // NOTE: Do NOT lock row direction here - shuttle is empty and going to pickup
+      // Direction lock will be applied AFTER pickup when shuttle enters the row with cargo
       const NodeOccupationService = require('./NodeOccupationService');
       const occupiedMap = await NodeOccupationService.getAllOccupiedNodes();
       const avoidNodes = Object.keys(occupiedMap).filter(qr =>
-        qr !== optimalShuttle.current_node && // Don't avoid myself
-        qr !== task.pickupNodeQr            // Don't avoid my destination
+        qr !== optimalShuttle.current_node &&
+        qr !== task.pickupNodeQr
       );
 
       logger.info(`[ShuttleDispatcherService] Planning path for ${optimalShuttle.id} avoiding ${avoidNodes.length} obstacles.`);
 
-
-      // Get all active paths from PathCacheService for traffic awareness
       const trafficData = await PathCacheService.getAllActivePaths();
       logger.debug(`[ShuttleDispatcherService] Traffic data for pathfinding: ${JSON.stringify(trafficData.map(t => t.shuttleId))}`);
 
@@ -242,9 +275,11 @@ class ShuttleDispatcherService {
         task.pickupNodeFloorId,
         {
           avoid: avoidNodes,
-          isCarrying: false, // Shuttle is empty when going to pickup
-          trafficData: trafficData, // Pass traffic data for proactive avoidance
+          isCarrying: false,
+          trafficData: trafficData,
           lastStepAction: TASK_ACTIONS.PICK_UP
+          // NOTE: Do NOT enforce one-way when shuttle is empty (going to pickup)
+          // Shuttle will naturally avoid wrong-direction paths due to direction_type constraints
         }
       );
       logger.info(`[DispatcherDebug] findShortestPath call completed.`);
@@ -257,7 +292,7 @@ class ShuttleDispatcherService {
           optimalShuttle.current_node,
           task.pickupNodeQr,
           task.pickupNodeFloorId,
-          { 
+          {
             isCarrying: false, // Still empty on fallback
             trafficData: trafficData, // Pass traffic data for proactive avoidance
             lastStepAction: TASK_ACTIONS.PICK_UP
@@ -304,6 +339,9 @@ class ShuttleDispatcherService {
 
       // 6. Update Task Status & Shuttle State
       await shuttleTaskQueueService.updateTaskStatus(task.taskId, 'assigned', optimalShuttle.id);
+
+      // 7. Update shuttle counter
+      await ShuttleCounterService.updateCounter();
 
       const fromName = await cellService.getDisplayNameWithoutFloor(optimalShuttle.current_node);
       const toName = await cellService.getCachedDisplayName(task.pickupNodeQr, task.pickupNodeFloorId);

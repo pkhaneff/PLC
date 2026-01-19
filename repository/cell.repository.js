@@ -266,6 +266,125 @@ class CellRepository {
             throw error;
         }
     }
+
+    /**
+     * Tìm row đầu tiên (theo FIFO) có node khả dụng, trả về TẤT CẢ node khả dụng trong row đó
+     * FIFO order: floor ASC, row ASC, col ASC
+     * @param {string} palletType - Loại pallet
+     * @param {number} floorId - Floor ID
+     * @returns {Promise<Array>} Danh sách tất cả node khả dụng trong row đầu tiên
+     */
+    async findAvailableNodesByFIFO(palletType, floorId) {
+        const query = `
+            SELECT c.*
+            FROM cells c
+            WHERE c.pallet_classification = ?
+              AND c.floor_id = ?
+              AND c.is_has_box = 0
+              AND c.is_block = 0
+              AND c.cell_type = 'storage'
+            ORDER BY
+              c.floor_id ASC,
+              c.\`row\` ASC,
+              c.col ASC
+        `;
+
+        try {
+            const [allNodes] = await pool.query(query, [palletType, floorId]);
+
+            if (!allNodes || allNodes.length === 0) {
+                return [];
+            }
+
+            // Lấy row đầu tiên
+            const firstRow = allNodes[0].row;
+
+            // Filter tất cả node trong row đó
+            const nodesInFirstRow = allNodes.filter(n => n.row === firstRow);
+
+            logger.info(`[CellRepository] Found ${nodesInFirstRow.length} available nodes in row ${firstRow} (floor ${floorId}, pallet ${palletType})`);
+            return nodesInFirstRow;
+
+        } catch (error) {
+            logger.error('[CellRepository] Error finding available nodes by FIFO:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Lấy node khả dụng trong 1 row cụ thể (từ trái qua phải)
+     * @param {number} floorId - Floor ID
+     * @param {number} row - Row number
+     * @param {string} palletType - Loại pallet
+     * @returns {Promise<Array>} Danh sách node khả dụng trong row
+     */
+    async getAvailableNodesInRow(floorId, row, palletType) {
+        const query = `
+            SELECT c.*
+            FROM cells c
+            WHERE c.pallet_classification = ?
+              AND c.floor_id = ?
+              AND c.\`row\` = ?
+              AND c.is_has_box = 0
+              AND c.is_block = 0
+              AND c.cell_type = 'storage'
+            ORDER BY c.col ASC
+        `;
+
+        try {
+            const [rows] = await pool.query(query, [palletType, floorId, row]);
+            return rows;
+        } catch (error) {
+            logger.error(`[CellRepository] Error getting available nodes in row ${row}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Lấy tất cả cells trong một row cụ thể
+     * @param {number} row - Row number
+     * @param {number} floorId - Floor ID
+     * @returns {Promise<Array>} Danh sách tất cả cells trong row
+     */
+    async getCellsByRow(row, floorId) {
+        const query = `
+            SELECT c.*
+            FROM cells c
+            WHERE c.floor_id = ?
+              AND c.\`row\` = ?
+            ORDER BY c.col ASC
+        `;
+
+        try {
+            const [rows] = await pool.query(query, [floorId, row]);
+            return rows;
+        } catch (error) {
+            logger.error(`[CellRepository] Error getting cells in row ${row}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Update node status (item_ID)
+     * @param {string} qrCode - QR code của node
+     * @param {object} data - Data cần update (ví dụ: { item_ID: "ITEM001" })
+     * @returns {Promise<boolean>}
+     */
+    async updateNodeStatus(qrCode, data) {
+        const query = `
+            UPDATE cells
+            SET pallet_id = ?
+            WHERE qr_code = ?
+        `;
+
+        try {
+            const [result] = await pool.query(query, [data.item_ID || null, qrCode]);
+            return result.affectedRows > 0;
+        } catch (error) {
+            logger.error(`[CellRepository] Error updating node status for ${qrCode}:`, error);
+            throw error;
+        }
+    }
 }
 
 module.exports = new CellRepository();

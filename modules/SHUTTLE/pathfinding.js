@@ -211,6 +211,35 @@ async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options =
         continue; // Block if loaded shuttle and neighbor has box (not target)
       }
 
+      // NEW: One-way constraint validation
+      if (options.enforceOneWay && options.targetRow !== undefined && options.requiredDirection) {
+        const currentRow = cell.row;
+        const neighborRow = neighborCell.row;
+
+        // Check if we're moving WITHIN the target row (not entering/exiting)
+        if (currentRow === options.targetRow && neighborRow === options.targetRow) {
+          // Both current and neighbor are in target row - check col movement direction
+          const colDiff = neighborCell.col - cell.col;
+
+          // requiredDirection: 1=LEFT_TO_RIGHT, 2=RIGHT_TO_LEFT
+          if (options.requiredDirection === 1) {
+            // LEFT_TO_RIGHT: Only allow moving to higher col (right) or staying same col
+            if (colDiff < 0) {
+              // Moving to lower col (left) - VIOLATION
+              logger.debug(`[Pathfinding] Skipping ${neighborCell.qr_code}: violates LEFT_TO_RIGHT (col ${cell.col} → ${neighborCell.col})`);
+              continue;
+            }
+          } else if (options.requiredDirection === 2) {
+            // RIGHT_TO_LEFT: Only allow moving to lower col (left) or staying same col
+            if (colDiff > 0) {
+              // Moving to higher col (right) - VIOLATION
+              logger.debug(`[Pathfinding] Skipping ${neighborCell.qr_code}: violates RIGHT_TO_LEFT (col ${cell.col} → ${neighborCell.col})`);
+              continue;
+            }
+          }
+        }
+      }
+
       const oppositeDir = getOppositeDirection(dir);
       const neighborAllowedDirections = parseDirectionType(neighborCell.direction_type);
 

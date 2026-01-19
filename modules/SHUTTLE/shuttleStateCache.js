@@ -48,12 +48,14 @@ async function updateShuttleState(shuttleCode, state) {
             currentStep: String(state.currentStep || 0), // Current step in mission
             shuttleStatus: String(state.shuttleStatus || 8), // Convert to string for Redis
             commandComplete: String(state.commandComplete || 1),
-            qrCode: state.qrCode || '',
-            current_node: state.qrCode || '', // Alias for compatibility
+            qrCode: state.qrCode || state.current_node || '',
+            current_node: state.current_node || state.qrCode || '', // Prioritize current_node if explicitly provided
             packageStatus: String(state.packageStatus || 0),
             isCarrying: state.packageStatus === 1 ? 'true' : 'false', // Derived field for convenience
             palletLiftingStatus: String(state.palletLiftingStatus || 0), // 0=hạ, 1=nâng
             missionCompleted: String(state.missionCompleted || 0), // Total missions completed counter
+            taskId: state.taskId || (state.meta ? state.meta.taskId : ''),
+            targetQr: state.targetQr || (state.meta ? state.meta.endNodeQr : ''),
             lastUpdate: String(Date.now())
         };
 
@@ -92,11 +94,13 @@ async function getShuttleState(shuttleCode) {
             shuttleStatus: parseInt(state.shuttleStatus, 10),
             commandComplete: parseInt(state.commandComplete, 10),
             qrCode: state.qrCode,
-            current_node: state.qrCode, // Alias for compatibility
+            current_node: state.current_node || state.qrCode, // Use stored current_node, fallback to qrCode
             packageStatus: parseInt(state.packageStatus, 10),
             isCarrying: state.isCarrying === 'true',
             palletLiftingStatus: parseInt(state.palletLiftingStatus, 10),
             missionCompleted: parseInt(state.missionCompleted, 10),
+            taskId: state.taskId || '',
+            targetQr: state.targetQr || '',
             lastUpdate: parseInt(state.lastUpdate, 10)
         };
     } catch (error) {

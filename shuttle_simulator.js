@@ -5,7 +5,7 @@ const { SHUTTLE_STATUS, TASK_ACTIONS, MQTT_TOPICS, MISSION_CONFIG } = require('.
 // --- Config ---
 const MQTT_BROKER_URL = 'mqtt://localhost:1883';
 const LOOP_INTERVAL = 500;
-const NODE_TRAVEL_TIME_MS = 1500;
+const NODE_TRAVEL_TIME_MS = 500;
 const COMMAND_TOPIC = 'shuttle/command/+';
 const SEND_MISSION_TOPIC = 'shuttle/sendMission/+';
 const INFO_TOPIC_PREFIX = 'shuttle/information/';
@@ -203,7 +203,9 @@ client.on('connect', () => {
                 qrCode: state.qrCode,
                 packageStatus: state.packageStatus,
                 palletLiftingStatus: state.palletLiftingStatus,
-                missionCompleted: state.missionCompleted
+                missionCompleted: state.missionCompleted,
+                taskId: state.taskInfo ? state.taskInfo.taskId : '',
+                targetQr: state.taskInfo ? state.taskInfo.endNodeQr : ''
             });
             client.publish(topic, payload);
         });
@@ -292,7 +294,7 @@ client.on('message', async (topic, message) => {
                 shuttle.lastMoveTimestamp = Date.now();
             }
 
-        // Handle legacy format: shuttle/command/{code}
+            // Handle legacy format: shuttle/command/{code}
         } else if (topicType === 'command' && command.path && command.onArrival) {
             console.log(`[Simulator] Shuttle ${shuttleCode} received legacy command format`);
 
