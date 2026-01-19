@@ -9,4 +9,8 @@ router.post('/register', shuttleController.registerShuttle);
 router.post('/update-position', shuttleController.updatePosition);
 router.post('/auto-mode', shuttleController.autoMode);
 
+// Giai đoạn 1 & 2 mới
+router.post('/pallet-inbound', shuttleController.registerInbound);
+router.post('/execute-storage', shuttleController.executeStorageTask);
+
 module.exports = router;  

@@ -48,7 +48,7 @@ class ConflictResolutionService {
             };
 
             // Get shuttle state and task info
-            const shuttleState = getShuttleState(shuttleId);
+            const shuttleState = await getShuttleState(shuttleId);
             if (!shuttleState) {
                 logger.error(`[ConflictResolution] Shuttle ${shuttleId} state not found`);
                 return { success: false, reason: 'Shuttle state not found' };
@@ -345,7 +345,7 @@ class ConflictResolutionService {
             // Get target node for backup calculation
             const taskInfo = await this.getTaskInfo(shuttleId);
             const targetNode = taskInfo?.endNodeQr || taskInfo?.pickupNodeQr;
-            const shuttleState = getShuttleState(shuttleId); // Get current shuttle state for isCarrying
+            const shuttleState = await getShuttleState(shuttleId); // Get current shuttle state for isCarrying
 
             if (targetNode) {
                 // Get traffic data for background reroute calculation
@@ -405,7 +405,7 @@ class ConflictResolutionService {
             const waitingTime = waitingSince ? (currentTime - parseInt(waitingSince, 10)) : 0;
 
             const taskInfo = await this.getTaskInfo(shuttleId);
-            const shuttleState = getShuttleState(shuttleId);
+            const shuttleState = await getShuttleState(shuttleId);
 
             // Get traffic data for reroute calculation
             const trafficData = await PathCacheService.getAllActivePaths();
@@ -453,7 +453,7 @@ class ConflictResolutionService {
                 return;
             } else {
                 logger.warn(`[ConflictResolution] No suitable reroute found for ${shuttleId} after ${waitingTime}ms wait (attempt ${retryCount + 1}).`);
-                
+
                 const MAX_RETRIES = 5; // Example: Try 5 times before escalating
                 const RETRY_INTERVAL_MS = 10000; // Example: Retry every 10 seconds
 
@@ -489,7 +489,7 @@ class ConflictResolutionService {
 
             // Get target shuttle state
             const { getShuttleState } = require('./shuttleStateCache');
-            const targetState = getShuttleState(targetShuttleId);
+            const targetState = await getShuttleState(targetShuttleId);
 
             if (!targetState) {
                 logger.error(`[ConflictResolution] Cannot request yield: shuttle ${targetShuttleId} state not found`);
@@ -530,6 +530,14 @@ class ConflictResolutionService {
             const taskInfoJson = await redisClient.get(`shuttle:${shuttleId}:task_info`);
             if (taskInfoJson) {
                 return JSON.parse(taskInfoJson);
+            }
+
+            // Fallback: get taskId from shuttle state and fetch from task:detail
+            const shuttleState = await getShuttleState(shuttleId);
+            if (shuttleState && shuttleState.taskId) {
+                const shuttleTaskQueueService = require('./shuttleTaskQueueService');
+                const taskDetail = await shuttleTaskQueueService.getTaskDetails(shuttleState.taskId);
+                if (taskDetail) return taskDetail;
             }
 
             // Default task info
@@ -585,7 +593,7 @@ class ConflictResolutionService {
             }
 
             // Fallback: search through shuttle states
-            const allShuttles = require('./shuttleStateCache').getAllShuttleStates();
+            const allShuttles = await require('./shuttleStateCache').getAllShuttleStates();
             const shuttleAtNode = allShuttles.find(s => s.qrCode === nodeQr);
             return shuttleAtNode ? shuttleAtNode.no : null;
 

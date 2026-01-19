@@ -1,9 +1,11 @@
 const { logger } = require('../logger/logger');
 const { asyncHandler } = require('../middlewares/error.middleware');
 const cellService = require('../modules/SHUTTLE/cellService');
+const shuttleTaskQueueService = require('../modules/SHUTTLE/shuttleTaskQueueService');
 const redisClient = require('../redis/init.redis'); // Import redis client
 
 const TASK_STAGING_QUEUE_KEY = 'task:staging_queue';
+const INBOUND_PALLET_QUEUE_KEY = 'shuttle:inbound_pallet_queue';
 
 class ShuttleController {
 
@@ -28,6 +30,186 @@ class ShuttleController {
     registerShuttle = asyncHandler(async (req, res) => {
     });
     updatePosition = asyncHandler(async (req, res) => {
+    });
+
+    /**
+     * Giai đoạn 1: Đăng ký Pallet nhập hàng
+     * Nhận thông tin pallet và đưa vào hàng đợi chờ xử lý
+     */
+    registerInbound = asyncHandler(async (req, res) => {
+        const { pallet_id, pallet_data } = req.body;
+
+        if (!pallet_id || !pallet_data) {
+            return res.status(400).json({
+                success: false,
+                error: 'Thiếu pallet_id hoặc pallet_data'
+            });
+        }
+
+        const inboundData = {
+            palletId: pallet_id,
+            palletType: pallet_data,
+            timestamp: Date.now()
+        };
+
+        await redisClient.lPush(INBOUND_PALLET_QUEUE_KEY, JSON.stringify(inboundData));
+
+        logger.info(`[Controller] Pallet ${pallet_id} (${pallet_data}) registered and queued.`);
+
+        return res.status(201).json({
+            success: true,
+            message: 'Pallet đã được ghi nhận vào hàng đợi.',
+            data: inboundData
+        });
+    });
+
+    /**
+     * Giai đoạn 2: Kích hoạt nhiệm vụ lưu kho cho một Shuttle cụ thể
+     */
+    executeStorageTask = asyncHandler(async (req, res) => {
+        const { rackId, palletType, shuttle_code } = req.body;
+
+        if (!rackId || !palletType || !shuttle_code) {
+            return res.status(400).json({
+                success: false,
+                error: 'Thiếu rackId, palletType hoặc shuttle_code'
+            });
+        }
+
+        // 1. Kiểm tra trạng thái shuttle
+        const { getShuttleState } = require('../modules/SHUTTLE/shuttleStateCache');
+        const shuttleState = await getShuttleState(shuttle_code);
+
+        if (!shuttleState) {
+            return res.status(404).json({
+                success: false,
+                error: `Không tìm thấy thông tin shuttle ${shuttle_code}`
+            });
+        }
+
+        if (shuttleState.shuttleStatus !== 8) { // 8 = IDLE
+            return res.status(400).json({
+                success: false,
+                error: `Shuttle ${shuttle_code} đang bận (status: ${shuttleState.shuttleStatus})`
+            });
+        }
+
+        // 2. Lấy pallet phù hợp từ queue (Duyệt queue tìm loại pallet khớp)
+        // Lưu ý: Đơn giản nhất là lấy pallet đầu tiên khớp loại, hoặc FIFO tuyệt đối
+        // Ở đây ta sử dụng LPOP và kiểm tra, nếu không khớp thì đẩy lại vào cuối (R-Push)
+        // Tuy nhiên để tối ưu, ta có thể duyệt qua danh sách Redis
+
+        const queueLength = await redisClient.lLen(INBOUND_PALLET_QUEUE_KEY);
+        let selectedPallet = null;
+        let checkedCount = 0;
+
+        while (checkedCount < queueLength) {
+            const palletJson = await redisClient.rPop(INBOUND_PALLET_QUEUE_KEY);
+            if (!palletJson) break;
+
+            const pallet = JSON.parse(palletJson);
+            if (pallet.palletType === palletType) {
+                selectedPallet = pallet;
+                break;
+            } else {
+                // Không khớp, đẩy ngược lại vào đầu queue để giữ thứ tự cho các yêu cầu khác
+                await redisClient.lPush(INBOUND_PALLET_QUEUE_KEY, palletJson);
+                checkedCount++;
+            }
+        }
+
+        if (!selectedPallet) {
+            return res.status(404).json({
+                success: false,
+                error: `Không tìm thấy pallet loại ${palletType} trong hàng đợi`
+            });
+        }
+
+        // 3. Khởi tạo nhiệm vụ (Tìm ô trống, khóa ô, và gửi cho dispatcher)
+        // Phần này sẽ gọi đến các logic core của autoMode nhưng nhắm mục tiêu vào 1 shuttle
+        try {
+            const shuttleConfig = require('../config/shuttle.config');
+            const CellRepository = require('../repository/cell.repository');
+            const shuttleDispatcherService = require('../modules/SHUTTLE/shuttleDispatcherService');
+
+            // Lấy pickup node từ config
+            const config = shuttleConfig.warehouses[rackId];
+            if (!config || !config.pickupNodeQr) {
+                throw new Error(`Không tìm thấy cấu hình cho Rack ID ${rackId}`);
+            }
+
+            const pickupNodeQr = config.pickupNodeQr;
+            const cellInfo = await cellService.getCellDeepInfoByQr(pickupNodeQr);
+            if (!cellInfo) {
+                throw new Error(`QR '${pickupNodeQr}' không tồn tại trong database`);
+            }
+
+            const pickupNodeFloorId = cellInfo.floor_id;
+
+            // Tìm ô trống
+            const availableNodes = await CellRepository.findAvailableNodesByFIFO(palletType, pickupNodeFloorId);
+            if (!availableNodes || availableNodes.length === 0) {
+                // Return pallet to queue if no storage available
+                await redisClient.lPush(INBOUND_PALLET_QUEUE_KEY, JSON.stringify(selectedPallet));
+                return res.status(409).json({
+                    success: false,
+                    error: `Không còn ô trống cho loại pallet ${palletType} trên tầng ${pickupNodeFloorId}`
+                });
+            }
+
+            const targetNode = availableNodes[0];
+
+            // Build task object
+            const taskId = `man_${Date.now()}_${shuttle_code}`;
+            const taskData = {
+                taskId: taskId,
+                pickupNodeQr: pickupNodeQr,
+                pickupNodeFloorId: pickupNodeFloorId,
+                endNodeQr: targetNode.qr_code,
+                endNodeFloorId: targetNode.floor_id,
+                endNodeCol: targetNode.col,
+                endNodeRow: targetNode.row,
+                palletType: palletType,
+                itemInfo: selectedPallet.palletId,
+                targetRow: targetNode.row,
+                targetFloor: targetNode.floor_id,
+                assignedShuttleId: shuttle_code,
+                status: 'pending',
+                timestamp: Date.now()
+            };
+
+            // 4. Lưu chi tiết task vào Redis (Quan trọng: Nếu không lưu, TaskEventListener sẽ bị thiếu dữ liệu khi xử lý event)
+            const taskDetailsToSave = { ...taskData };
+            if (taskDetailsToSave.itemInfo && typeof taskDetailsToSave.itemInfo === 'object') {
+                taskDetailsToSave.itemInfo = JSON.stringify(taskDetailsToSave.itemInfo);
+            }
+            await redisClient.hSet(shuttleTaskQueueService.getTaskKey(taskId), taskDetailsToSave);
+
+            // 5. Dispatch task trực tiếp cho shuttle được chỉ định
+            const dispatcher = new shuttleDispatcherService(req.app.get('io'));
+            await dispatcher.dispatchTaskToShuttle(taskData, shuttle_code);
+
+            return res.status(200).json({
+                success: true,
+                message: `Đã gán nhiệm vụ thành công cho shuttle ${shuttle_code}`,
+                data: {
+                    taskId: taskId,
+                    palletId: selectedPallet.palletId,
+                    destination: targetNode.qr_code
+                }
+            });
+
+        } catch (error) {
+            logger.error(`[Controller] Error executing manual storage task: ${error.message}`);
+            // Return pallet to queue on internal error
+            if (selectedPallet) {
+                await redisClient.lPush(INBOUND_PALLET_QUEUE_KEY, JSON.stringify(selectedPallet));
+            }
+            return res.status(500).json({
+                success: false,
+                error: error.message
+            });
+        }
     });
 
     autoMode = asyncHandler(async (req, res) => {

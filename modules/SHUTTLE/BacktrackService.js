@@ -37,14 +37,14 @@ class BacktrackService {
             logger.info(`[Backtrack] Finding safe backtrack node for shuttle ${shuttleId}`);
 
             // Get shuttle state
-            const shuttleState = getShuttleState(shuttleId);
+            const shuttleState = await getShuttleState(shuttleId);
             if (!shuttleState) {
                 logger.error(`[Backtrack] Shuttle ${shuttleId} state not found`);
                 return null;
             }
 
             // Get current path from Redis
-            const pathKey = `shuttle:${shuttleId}:path`;
+            const pathKey = `shuttle:active_path:${shuttleId}`;
             const pathJson = await redisClient.get(pathKey);
 
             let path = [];
@@ -137,7 +137,7 @@ class BacktrackService {
             logger.info(`[Backtrack] Executing backtrack for shuttle ${shuttleId} to ${targetNode} (${steps} steps)`);
 
             // Get shuttle state
-            const shuttleState = getShuttleState(shuttleId);
+            const shuttleState = await getShuttleState(shuttleId);
             if (!shuttleState) {
                 logger.error(`[Backtrack] Shuttle ${shuttleId} state not found`);
                 return false;

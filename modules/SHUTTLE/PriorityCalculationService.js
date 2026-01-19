@@ -28,7 +28,7 @@ class PriorityCalculationService {
     async calculatePriority(shuttleId, taskInfo, waitingTime = 0) {
         try {
             // Get shuttle state to check if carrying cargo
-            const shuttleState = getShuttleState(shuttleId);
+            const shuttleState = await getShuttleState(shuttleId);
 
             // Determine if carrying cargo
             let isCarrying = false;

@@ -253,24 +253,54 @@ class ShuttleDispatcherService {
         return;
       }
 
-      // 4. Calculate Path (Shuttle -> Pickup)
-      // NOTE: Do NOT lock row direction here - shuttle is empty and going to pickup
-      // Direction lock will be applied AFTER pickup when shuttle enters the row with cargo
+      const fromName = await cellService.getDisplayNameWithoutFloor(optimalShuttle.current_node);
+      const toName = await cellService.getCachedDisplayName(task.pickupNodeQr, task.pickupNodeFloorId);
+      logger.info(`[ShuttleDispatcherService] Found optimal shuttle ${optimalShuttle.id} for task ${task.taskId}. Path: ${fromName} -> ${toName}`);
+
+      // 4. Dispatch task to the chosen shuttle
+      return await this.dispatchTaskToShuttle(task, optimalShuttle.id);
+
+    } catch (error) {
+      logger.error('[ShuttleDispatcherService] Error during task dispatch:', error);
+      // If a lock was acquired and an unexpected error occurred, release it to prevent a deadlock
+      if (pickupResourceKey && task) {
+        logger.error(`[ShuttleDispatcherService] Releasing lock for ${pickupResourceKey} due to unexpected error.`);
+        await ReservationService.releaseLock(pickupResourceKey);
+      }
+    }
+  }
+
+  /**
+   * Trực tiếp gán và gửi nhiệm vụ cho một shuttle cụ thể
+   * @param {object} task - Dữ liệu task
+   * @param {string} shuttleId - ID của shuttle
+   */
+  async dispatchTaskToShuttle(task, shuttleId) {
+    try {
+      const { getShuttleState } = require('./shuttleStateCache');
+      const shuttleState = await getShuttleState(shuttleId);
+
+      if (!shuttleState) {
+        throw new Error(`Shuttle ${shuttleId} state not found`);
+      }
+
+      // 1. Calculate Path (Shuttle -> Pickup)
       const NodeOccupationService = require('./NodeOccupationService');
       const occupiedMap = await NodeOccupationService.getAllOccupiedNodes();
+
+      const currentNode = shuttleState.current_node || shuttleState.qrCode;
       const avoidNodes = Object.keys(occupiedMap).filter(qr =>
-        qr !== optimalShuttle.current_node &&
+        qr !== currentNode &&
         qr !== task.pickupNodeQr
       );
 
-      logger.info(`[ShuttleDispatcherService] Planning path for ${optimalShuttle.id} avoiding ${avoidNodes.length} obstacles.`);
+      logger.info(`[ShuttleDispatcherService] Planning path for ${shuttleId} to ${task.pickupNodeQr} avoiding ${avoidNodes.length} obstacles.`);
 
+      const PathCacheService = require('./PathCacheService');
       const trafficData = await PathCacheService.getAllActivePaths();
-      logger.debug(`[ShuttleDispatcherService] Traffic data for pathfinding: ${JSON.stringify(trafficData.map(t => t.shuttleId))}`);
 
-      logger.info(`[DispatcherDebug] Calling findShortestPath...`);
       let fullPath = await findShortestPath(
-        optimalShuttle.current_node,
+        currentNode,
         task.pickupNodeQr,
         task.pickupNodeFloorId,
         {
@@ -278,51 +308,38 @@ class ShuttleDispatcherService {
           isCarrying: false,
           trafficData: trafficData,
           lastStepAction: TASK_ACTIONS.PICK_UP
-          // NOTE: Do NOT enforce one-way when shuttle is empty (going to pickup)
-          // Shuttle will naturally avoid wrong-direction paths due to direction_type constraints
         }
       );
-      logger.info(`[DispatcherDebug] findShortestPath call completed.`);
 
-      // 2. Fallback: If no path found avoiding obstacles, try direct path (ConflictResolution will handle yielding)
+      // Fallback
       if (!fullPath) {
-        logger.warn(`[ShuttleDispatcherService] Soft avoidance failed for shuttle ${optimalShuttle.id}. Trying direct path.`);
-        logger.info(`[DispatcherDebug] Calling findShortestPath (fallback)...`);
+        logger.warn(`[ShuttleDispatcherService] Soft avoidance failed for shuttle ${shuttleId}. Trying direct path.`);
         fullPath = await findShortestPath(
-          optimalShuttle.current_node,
+          currentNode,
           task.pickupNodeQr,
           task.pickupNodeFloorId,
           {
-            isCarrying: false, // Still empty on fallback
-            trafficData: trafficData, // Pass traffic data for proactive avoidance
+            isCarrying: false,
+            trafficData: trafficData,
             lastStepAction: TASK_ACTIONS.PICK_UP
           }
         );
-        logger.info(`[DispatcherDebug] findShortestPath (fallback) call completed.`);
       }
 
-      if (!fullPath) {
-        const fromName = await cellService.getDisplayNameWithoutFloor(optimalShuttle.current_node);
-        const toName = await cellService.getCachedDisplayName(task.pickupNodeQr, task.pickupNodeFloorId);
-        logger.error(`[ShuttleDispatcherService] Failed to find path from ${fromName} to ${toName}`);
-        return;
-      }
-
-      // Ensure path has steps before saving
       if (!fullPath || !fullPath.totalStep || fullPath.totalStep === 0) {
-        logger.error(`[ShuttleDispatcherService] Path calculated for task ${task.taskId} has no steps.`);
-        return;
+        const fromName = await cellService.getDisplayNameWithoutFloor(currentNode);
+        const toName = await cellService.getCachedDisplayName(task.pickupNodeQr, task.pickupNodeFloorId);
+        throw new Error(`Failed to find valid path from ${fromName} to ${toName}`);
       }
 
-      // Save the path to PathCacheService (Trụ cột 1)
-      await PathCacheService.savePath(optimalShuttle.id, fullPath);
-      logger.info(`[ShuttleDispatcherService] Path for shuttle ${optimalShuttle.id} (task ${task.taskId}) saved to PathCacheService.`);
+      // 2. Save the path
+      const PathCacheServiceModule = require('./PathCacheService');
+      await PathCacheServiceModule.savePath(shuttleId, fullPath);
 
-      const pathSteps = fullPath.steps || fullPath; // Handle path format
+      const pathSteps = fullPath.steps || fullPath;
 
-      // 5. Send mission to Shuttle using new shuttle/sendMission topic
-      const missionTopic = `${MQTT_TOPICS.SEND_MISSION}/${optimalShuttle.id}`;
-
+      // 3. Send mission via MQTT
+      const missionTopic = `${MQTT_TOPICS.SEND_MISSION}/${shuttleId}`;
       const missionPayload = {
         ...pathSteps,
         meta: {
@@ -335,25 +352,21 @@ class ShuttleDispatcherService {
         }
       };
 
-      await this.publishMissionWithRetry(missionTopic, missionPayload, optimalShuttle.id);
+      await this.publishMissionWithRetry(missionTopic, missionPayload, shuttleId);
 
-      // 6. Update Task Status & Shuttle State
-      await shuttleTaskQueueService.updateTaskStatus(task.taskId, 'assigned', optimalShuttle.id);
+      // 4. Update Task Status & Shuttle State
+      await shuttleTaskQueueService.updateTaskStatus(task.taskId, 'assigned', shuttleId);
 
-      // 7. Update shuttle counter
+      // 5. Update shuttle counter
+      const ShuttleCounterService = require('./ShuttleCounterService');
       await ShuttleCounterService.updateCounter();
 
-      const fromName = await cellService.getDisplayNameWithoutFloor(optimalShuttle.current_node);
-      const toName = await cellService.getCachedDisplayName(task.pickupNodeQr, task.pickupNodeFloorId);
-      logger.info(`[ShuttleDispatcherService] Dispatched task ${task.taskId} to shuttle ${optimalShuttle.id}. Path: ${fromName} -> ${toName} (${pathSteps.length} steps)`);
+      logger.info(`[ShuttleDispatcherService] Task ${task.taskId} dispatched to shuttle ${shuttleId}.`);
+      return { success: true, taskId: task.taskId };
 
     } catch (error) {
-      logger.error('[ShuttleDispatcherService] Error during task dispatch:', error);
-      // If a lock was acquired and an unexpected error occurred, release it to prevent a deadlock
-      if (pickupResourceKey && task) {
-        logger.error(`[ShuttleDispatcherService] Releasing lock for ${pickupResourceKey} due to unexpected error.`);
-        await ReservationService.releaseLock(pickupResourceKey);
-      }
+      logger.error(`[ShuttleDispatcherService] Error in dispatchTaskToShuttle: ${error.message}`);
+      throw error;
     }
   }
 

@@ -244,7 +244,7 @@ class ParkingNodeService {
      */
     async getAllActiveShuttlePaths() {
         try {
-            const allShuttles = getAllShuttleStates();
+            const allShuttles = await getAllShuttleStates();
             const allPaths = [];
 
             for (const shuttle of allShuttles) {
@@ -254,7 +254,7 @@ class ParkingNodeService {
                 }
 
                 // Also check Redis for stored paths
-                const redisPath = await redisClient.get(`shuttle:${shuttle.no}:path`);
+                const redisPath = await redisClient.get(`shuttle:${shuttle.no || shuttle.id}:path`);
                 if (redisPath) {
                     try {
                         const parsedPath = JSON.parse(redisPath);
@@ -314,7 +314,7 @@ class ParkingNodeService {
      */
     async checkPathBlocked(pathNodes, shuttleId) {
         try {
-            const allShuttles = getAllShuttleStates();
+            const allShuttles = await getAllShuttleStates();
 
             for (const shuttle of allShuttles) {
                 if (shuttle.no === shuttleId) continue;
