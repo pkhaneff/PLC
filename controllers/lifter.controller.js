@@ -1,5 +1,6 @@
 const lifterService = require('../modules/Lifter/lifterService');
 const lifterQueueService = require('../modules/Lifter/lifterQueueService');
+const { logger } = require('../logger/logger');
 
 class LifterController {
   /**
@@ -316,6 +317,111 @@ class LifterController {
       return res.status(500).json({
         success: false,
         message: error.message || 'Internal server error'
+      });
+    }
+  }
+  /**
+   * Mô phỏng điều khiển và giám sát lifter
+   * POST /api/v1/lifter/simulate-control
+   * Body: { targetFloor: number }
+   */
+  async simulateControl(req, res) {
+    try {
+      const { targetFloor } = req.body;
+      const plcId = 'PLC_1'; // Mặc định dùng PLC_1 cho mô phỏng
+
+      if (targetFloor !== 1 && targetFloor !== 2) {
+        return res.status(400).json({
+          success: false,
+          message: 'Tầng mục tiêu phải là 1 hoặc 2'
+        });
+      }
+
+      const plcManager = require('../modules/PLC/plcManager');
+
+      // 1. Đọc vị trí hiện tại
+      const posF1 = plcManager.getValue(plcId, 'LIFTER_1_POS_F1');
+      const posF2 = plcManager.getValue(plcId, 'LIFTER_1_POS_F2');
+      const currentFloor = posF1 ? 1 : (posF2 ? 2 : 0);
+
+      logger.info(`[LifterSim] Yêu cầu tới tầng ${targetFloor}. Vị trí hiện tại: Tầng ${currentFloor || 'Không xác định'}`);
+
+      if (currentFloor === targetFloor) {
+        return res.json({
+          success: true,
+          message: `Lifter đã ở tầng ${targetFloor}`,
+          data: { currentFloor }
+        });
+      }
+
+      // 2. Ghi lệnh điều khiển di chuyển
+      const ctrlTag = targetFloor === 1 ? 'LIFTER_1_CTRL_F1' : 'LIFTER_1_CTRL_F2';
+      const writeResult = await plcManager.writeValue(plcId, ctrlTag, true);
+
+      if (writeResult?.error) {
+        throw new Error(`Không thể ghi lệnh điều khiển xuống PLC: ${writeResult.error}`);
+      }
+
+      logger.info(`[LifterSim] Đã ghi lệnh di chuyển: ${ctrlTag} = true`);
+
+      // 3. Giám sát lỗi và di chuyển (mô phỏng)
+      let moveTime = 0;
+      const maxMoveTime = 2000;
+      const checkInterval = 500;
+
+      const monitorMovement = () => new Promise((resolve, reject) => {
+        const timer = setInterval(async () => {
+          moveTime += checkInterval;
+
+          // Kiểm tra lỗi
+          const hasError = plcManager.getValue(plcId, 'LIFTER_1_ERROR');
+          if (hasError) {
+            clearInterval(timer);
+            return reject(new Error('Lifter gặp lỗi trong quá trình di chuyển!'));
+          }
+
+          logger.debug(`[LifterSim] Đang di chuyển... (${moveTime}ms)`);
+
+          if (moveTime >= maxMoveTime) {
+            clearInterval(timer);
+            resolve();
+          }
+        }, checkInterval);
+      });
+
+      try {
+        await monitorMovement();
+      } catch (error) {
+        return res.status(500).json({
+          success: false,
+          message: error.message
+        });
+      }
+
+      // 4. Khi đến nơi, cập nhật vị trí
+      const targetPosTag = targetFloor === 1 ? 'LIFTER_1_POS_F1' : 'LIFTER_1_POS_F2';
+      const oldPosTag = targetFloor === 1 ? 'LIFTER_1_POS_F2' : 'LIFTER_1_POS_F1';
+
+      await plcManager.writeValue(plcId, targetPosTag, true);
+      await plcManager.writeValue(plcId, oldPosTag, false);
+      await plcManager.writeValue(plcId, ctrlTag, false); // Tắt lệnh điều khiển
+
+      logger.info(`[LifterSim] Đã đến tầng ${targetFloor}. Cập nhật sensor.`);
+
+      return res.json({
+        success: true,
+        message: `Đã di chuyển lifter tới tầng ${targetFloor} thành công`,
+        data: {
+          previousFloor: currentFloor,
+          currentFloor: targetFloor
+        }
+      });
+
+    } catch (error) {
+      console.error('Error in simulateControl:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Lỗi hệ thống'
       });
     }
   }

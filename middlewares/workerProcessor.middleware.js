@@ -1,10 +1,9 @@
 const workerManager = require('../worker/workerManager');
-const {logger} = require('../logger/logger')
+const { logger } = require('../logger/logger')
 
 
 async function processWorkerTask(taskId, plcId, io) {
     try {
-        logger.info(`[WorkerProcessorMiddleware] Processing task ${taskId} for PLC ${plcId}`);
 
         const result = await workerManager.executeTask(taskId, plcId, 'fetch_data', {
             plcId,
@@ -12,7 +11,6 @@ async function processWorkerTask(taskId, plcId, io) {
         });
 
         if (result.status === 'success') {
-            logger.info(`[WorkerProcessorMiddleware] Task ${taskId} completed successfully`);
 
             io.emit('plc-processing-complete', {
                 taskId,
@@ -35,4 +33,4 @@ async function processWorkerTask(taskId, plcId, io) {
     }
 }
 
-module.exports = {processWorkerTask};
+module.exports = { processWorkerTask };

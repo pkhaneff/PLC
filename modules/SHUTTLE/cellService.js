@@ -167,15 +167,9 @@ class CellService {
     }
   }
 
-  /**
-   * Clear the name cache (call when cell names are updated)
-   */
   clearNameCache() {
     this.nameCache.clear();
-    logger.info('[CellService] Name cache cleared');
   }
-
-  // --- Write methods delegated to Repository ---
 
   async updateCellHasBox(cellId, hasBox, palletId) {
     return CellRepository.updateCellHasBox(cellId, hasBox, palletId);
@@ -194,25 +188,9 @@ class CellService {
     }
   }
 
-  /**
-   * Get deep info for a cell by its unique QR code.
-   * Resolves floor_id and rack_id automatically.
-   */
   async getCellDeepInfoByQr(qrCode) {
     return CellRepository.getCellDeepInfoByQr(qrCode);
   }
-
-  // --- End ID Refactoring Methods ---
-  // --- Obsolete Methods ---
-  // The following methods are intentionally removed as their logic is replaced
-  // by the new Scheduler Worker and distributed lock mechanism:
-  // - findAndReserveNextEmptyCellFIFO
-  // - findNextEmptyCellFIFO
-  // - unreserveCell
-  // - verifyCellsExist (can be implemented in repo if needed elsewhere)
-  // - getFloorIdByLogicalNumber (can be implemented in repo if needed elsewhere)
-  // - getFloorByRackAndOrder (can be implemented in repo if needed elsewhere)
-  // - getFloorsByRackName (can be implemented in repo if needed elsewhere)
 }
 
 module.exports = new CellService();

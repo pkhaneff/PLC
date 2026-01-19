@@ -33,4 +33,7 @@ router.delete('/clear-queues', lifterController.clearQueues);
 // Lấy thông tin lifter theo ID
 router.get('/info/:lifterId', lifterController.getLifterInfo);
 
+// Mô phỏng điều khiển và giám sát lifter
+router.post('/simulate-control', lifterController.simulateControl);
+
 module.exports = router;

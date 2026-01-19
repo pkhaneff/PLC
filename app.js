@@ -8,7 +8,7 @@ const { notFoundHandler, errorHandler } = require('./middlewares');
 const plcManager = require('./modules/PLC/plcManager');
 const { plcsConfig } = require('./modules/PLC/configPLC');
 const healthController = require('./controllers/health.controller');
-const {logger} = require('./logger/logger.js')
+const { logger } = require('./logger/logger.js')
 const shuttleDispatcherService = require('./modules/SHUTTLE/shuttleDispatcherService');
 const taskEventListener = require('./modules/SHUTTLE/taskEventListener');
 const { initializeMqttBroker } = require('./services/mqttService');
@@ -32,26 +32,20 @@ app.use(errorHandler);
 
 async function startServer() {
     try {
-        // logger.debug('[Server] Initializing PLCs...');
-        // await plcManager.initializeMultiplePLCs(plcsConfig);
-        // healthController.setInitialized(true);
-        // logger.info('[Server] All PLCs initialized successfully!');
 
-        // Initialize 3-Pillar System
-        logger.info('[Server] Initializing 3-Pillar Intelligent Traffic Management System...');
-        await PathCacheService.initialize(); // Pillar 1: Traffic Center with auto-cleanup
-        logger.info('[Server] Pillar 1 (Traffic Center) initialized ✓');
+        await plcManager.initializeMultiplePLCs(plcsConfig);
+        healthController.setInitialized(true);
+        logger.info('[Server] All PLCs initialized successfully!');
+
+        await PathCacheService.initialize();
 
         const dispatcher = new shuttleDispatcherService(io);
 
         initializeMqttBroker(io);
-        taskEventListener.initialize(); // Initialize the task event listener
-        taskEventListener.setDispatcher(dispatcher); // Link dispatcher to listener
+        taskEventListener.initialize();
+        taskEventListener.setDispatcher(dispatcher);
 
         server.listen(PORT, () => {
-            logger.info(`Server is running on port ${PORT}!`)
-            logger.info(`WebSocket is ready!`)
-            logger.info('[Server] 3-Pillar System fully operational ✓');
             dispatcher.startDispatcher();
         });
     } catch (error) {
@@ -61,13 +55,11 @@ async function startServer() {
 
 // Graceful shutdown
 process.on('SIGINT', () => {
-    logger.info('[Server] Shutting down gracefully...');
     PathCacheService.stopAutoCleanup();
     process.exit(0);
 });
 
 process.on('SIGTERM', () => {
-    logger.info('[Server] SIGTERM received, shutting down...');
     PathCacheService.stopAutoCleanup();
     process.exit(0);
 });

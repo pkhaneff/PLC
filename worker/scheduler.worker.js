@@ -4,6 +4,8 @@ const redisClient = require('../redis/init.redis');
 const shuttleTaskQueueService = require('../modules/SHUTTLE/shuttleTaskQueueService');
 const ReservationService = require('../modules/COMMON/reservationService');
 const cellService = require('../modules/SHUTTLE/cellService');
+const ShuttleCounterService = require('../modules/SHUTTLE/ShuttleCounterService');
+const RowCoordinationService = require('../modules/SHUTTLE/RowCoordinationService');
 
 const SCHEDULER_INTERVAL = 5000;
 const ENDNODE_PAGE_SIZE = 10;
@@ -23,7 +25,6 @@ class Scheduler {
       return;
     }
 
-    logger.info(`[Scheduler] Starting scheduler with interval: ${SCHEDULER_INTERVAL}ms.`);
     this.isRunning = true;
     this.timer = setInterval(() => this.processStagingQueue(), SCHEDULER_INTERVAL);
   }
@@ -33,7 +34,6 @@ class Scheduler {
       logger.warn('[Scheduler] Attempted to stop a non-running scheduler.');
       return;
     }
-    logger.info('[Scheduler] Stopping scheduler.');
     clearInterval(this.timer);
     this.isRunning = false;
     this.timer = null;
@@ -55,10 +55,8 @@ class Scheduler {
     try {
       // DEBUGGING STEP: Check queue length before popping
       const queueLength = await redisClient.lLen(TASK_STAGING_QUEUE_KEY);
-      logger.info(`[Scheduler] Checking staging queue. Found ${queueLength} tasks.`);
 
       if (queueLength === 0) {
-        logger.debug('[Scheduler] Staging queue is empty. Nothing to schedule.');
         this.isProcessing = false;
         return;
       }
@@ -68,19 +66,14 @@ class Scheduler {
 
       // This case should theoretically not be hit if lLen > 0, but as a safeguard:
       if (!stagedTaskJSON) {
-        logger.warn('[Scheduler] lLen reported items, but RPOP returned null. A race condition might have occurred.');
         this.isProcessing = false;
         return;
       }
 
       const stagedTask = JSON.parse(stagedTaskJSON);
       const pickupName = await cellService.getCachedDisplayName(stagedTask.pickupNodeQr, stagedTask.pickupNodeFloorId);
-      logger.info(`[Scheduler] Popped task from staging queue for pickup: ${pickupName}`);
 
       // === ROW COORDINATION LOGIC ===
-      // Xác định targetRow dựa trên batch coordination khi có nhiều shuttle
-      const ShuttleCounterService = require('../modules/SHUTTLE/ShuttleCounterService');
-      const RowCoordinationService = require('../modules/SHUTTLE/RowCoordinationService');
 
       const activeShuttleCount = await ShuttleCounterService.getCount();
       const enforceRowCoordination = activeShuttleCount >= 2;
@@ -97,9 +90,6 @@ class Scheduler {
         if (!batchId) {
           batchId = `batch_${stagedTask.pickupNodeQr}_${Date.now()}`;
           await redisClient.set(batchKey, batchId, { EX: 3600 });
-          logger.info(`[Scheduler] ✅ Created new batchId ${batchId} for pickup ${pickupName}`);
-        } else {
-          logger.info(`[Scheduler] Using existing batchId ${batchId} for pickup ${pickupName}`);
         }
 
         // Nếu chưa có targetRow, cần xác định row cho batch
@@ -131,12 +121,9 @@ class Scheduler {
             targetRow = firstAvailableRow; // Fallback
           }
 
-          logger.info(`[Scheduler] 🎯 Batch ${batchId} assigned to row ${targetRow}`);
         } else {
-          // Đã có targetRow (từ batch trước đó), verify với RowCoordinationService
           const assignedRow = await RowCoordinationService.getAssignedRow(batchId);
           if (assignedRow && assignedRow !== targetRow) {
-            logger.warn(`[Scheduler] Task has targetRow ${targetRow} but batch ${batchId} is assigned to row ${assignedRow}. Using batch row.`);
             targetRow = assignedRow;
           }
         }
@@ -156,7 +143,6 @@ class Scheduler {
           }
 
           targetRow = availableNodes[0].row;
-          logger.info(`[Scheduler] Single shuttle mode - using FIFO row ${targetRow}`);
         }
       }
 
@@ -181,8 +167,6 @@ class Scheduler {
         return;
       }
 
-      logger.debug(`[Scheduler] Found ${candidateNodes.length} candidate nodes in row ${targetRow}. Attempting to lock one...`);
-
       let isLockAcquired = false;
       // 3. Loop through candidateNodes and try to acquire lock (từ trái qua phải)
       for (const node of candidateNodes) {
@@ -193,7 +177,6 @@ class Scheduler {
 
         if (lockAcquired) {
           const endNodeName = await cellService.getCachedDisplayName(node.qr_code, node.floor_id);
-          logger.info(`[Scheduler] Successfully acquired lock for end-node ${endNodeName} (row ${targetRow}, col ${node.col})`);
 
           // 4. If lock acquired, register the real task and break loop
           const finalTaskData = {
@@ -224,7 +207,6 @@ class Scheduler {
       logger.error('[Scheduler] Error during processing cycle:', error);
       // If an error occurred after popping a task, try to push it back
       if (stagedTaskJSON) {
-        logger.info('[Scheduler] Attempting to re-queue task after error.');
         await redisClient.lPush(TASK_STAGING_QUEUE_KEY, stagedTaskJSON);
       }
     } finally {
@@ -239,7 +221,6 @@ if (require.main === module) {
   scheduler.run();
 
   process.on('SIGINT', () => {
-    logger.info('[Scheduler] Gracefully shutting down from SIGINT');
     scheduler.stop();
     process.exit(0);
   });

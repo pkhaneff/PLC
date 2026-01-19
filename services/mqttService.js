@@ -8,19 +8,9 @@ const MQTT_PORT = process.env.MQTT_PORT || 1883;
 const server = net.createServer(aedes.handle);
 
 function initializeMqttBroker(io) { // Accept io instance
-    server.listen(MQTT_PORT, function () {
-        logger.info(`MQTT Broker started and listening on port ${MQTT_PORT}`);
-    });
+    server.listen(MQTT_PORT);
 
     // Event listeners for broker logging
-    aedes.on('client', function (client) {
-        logger.info(`MQTT Client Connected: ${client.id}`);
-    });
-
-    aedes.on('clientDisconnect', function (client) {
-        logger.info(`MQTT Client Disconnected: ${client.id}`);
-    });
-
     aedes.on('publish', async function (packet, client) {
         if (client) {
             const topic = packet.topic;
@@ -56,7 +46,6 @@ function initializeMqttBroker(io) { // Accept io instance
 }
 
 function publishToTopic(topic, payload) {
-    logger.info(`[MqttService] Attempting to publish to topic: ${topic}`); // <-- ADDED THIS LOG
 
     const payloadBuffer = Buffer.from(JSON.stringify(payload)); // <-- Ensure payload is a Buffer
 
@@ -72,12 +61,9 @@ function publishToTopic(topic, payload) {
         // This callback should ALWAYS execute, even if err is null.
         if (err) {
             logger.error(`[MqttService] PUBLISH CALLBACK: Error publishing to ${topic}:`, err);
-        } else {
-            logger.info(`[MqttService] PUBLISH CALLBACK: Successfully published command to ${topic}`);
         }
     });
 
-    logger.info(`[MqttService] aedes.publish() called for ${topic}. Waiting for callback.`); // <-- ADDED THIS LOG
 }
 
 module.exports = { initializeMqttBroker, aedes, publishToTopic };

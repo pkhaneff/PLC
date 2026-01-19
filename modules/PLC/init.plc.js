@@ -45,7 +45,6 @@ class InitPlc extends EventEmitter {
                     return;
                 }
 
-                logger.info(`[${this.plcId}] Connected successfully`);
 
                 this.conn.setTranslationCB(tag => this.variables[tag] || null);
                 this.conn.addItems(Object.keys(this.variables));
@@ -70,7 +69,6 @@ class InitPlc extends EventEmitter {
 
         return new Promise((resolve) => {
             this.conn.dropConnection(() => {
-                logger.info(`[${this.plcId}] Disconnected`);
                 this.isConnected = false;
                 this.emit('disconnected');
                 resolve();
@@ -89,7 +87,7 @@ class InitPlc extends EventEmitter {
                     const errorMsg = this.parseError(err);
                     logger.error(`[${this.plcId}] Read error:`, errorMsg);
 
-                    this.handleReadError();
+                    this.handleReadError(errorMsg);
                     resolve({ error: err, values: {} });
                     return;
                 }
@@ -101,16 +99,44 @@ class InitPlc extends EventEmitter {
         });
     }
 
+    async writeItems(tagName, value) {
+        if (!this.isConnected || !this.conn) {
+            return { error: 'Not connected' };
+        }
+
+        const tags = Array.isArray(tagName) ? tagName : [tagName];
+        const values = Array.isArray(value) ? value : [value];
+
+        return new Promise((resolve) => {
+            logger.debug(`[${this.plcId}] Preparing to write: ${tags} = ${values}`);
+            this.conn.writeItems(tags, values, (err) => {
+                if (err) {
+                    const errorMsg = this.parseError(err);
+                    logger.error(`[${this.plcId}] Write error on ${tags}:`, errorMsg);
+                    resolve({ error: err });
+                    return;
+                }
+                logger.debug(`[${this.plcId}] Write success confirms locally: ${tags} = ${values}`);
+                resolve({ error: null });
+            });
+        });
+    }
+
     parseError(err) {
         if (typeof err === 'object' && err.message) return err.message;
         if (typeof err === 'string') return err;
         if (err === true) return 'Invalid Response Code from PLC';
-        return 'Unknown error';
+        if (typeof err === 'number') return `PLC Error Code: ${err}`;
+        try {
+            return JSON.stringify(err);
+        } catch (e) {
+            return String(err);
+        }
     }
 
-    handleReadError() {
+    handleReadError(msg) {
         this.isConnected = false;
-        this.emit('error');
+        this.emit('error', msg);
         this.scheduleReconnect();
     }
 
@@ -137,8 +163,6 @@ class InitPlc extends EventEmitter {
 
     startPolling() {
         if (this.pollingTimer) return;
-
-        logger.info(`[${this.plcId}] Start polling every ${this.pollingInterval}ms`);
 
         const poll = async () => {
             if (this.isShuttingDown) return;
@@ -173,12 +197,10 @@ class InitPlc extends EventEmitter {
     }
 
     async start() {
-        logger.info(`[${this.plcId}] Starting...`);
 
         try {
             await this.connectPlc();
             this.startPolling();
-            logger.info(`[${this.plcId}] Started successfully`);
         } catch (err) {
             logger.error(`[${this.plcId}] Start failed:`, err.message);
             throw err;
@@ -186,7 +208,6 @@ class InitPlc extends EventEmitter {
     }
 
     async shutdown() {
-        logger.info(`[${this.plcId}] Shutting down...`);
 
         this.isShuttingDown = true;
         this.stopPolling();
@@ -197,7 +218,6 @@ class InitPlc extends EventEmitter {
         }
 
         await this.disConnect();
-        logger.info(`[${this.plcId}] Shutdown complete`);
     }
 
     getValue(varName) {

@@ -385,6 +385,27 @@ class CellRepository {
             throw error;
         }
     }
+
+    /**
+     * Check if a pallet ID already exists in any cell.
+     * @param {string} palletId - The pallet ID to check.
+     * @param {string} palletType - The classification/type of the pallet.
+     * @returns {Promise<boolean>}
+     */
+    async isPalletIdExists(palletId, palletType) {
+        const query = `
+            SELECT id FROM cells
+            WHERE pallet_id = ? AND pallet_classification = ?
+            LIMIT 1;
+        `;
+        try {
+            const [rows] = await pool.query(query, [palletId, palletType]);
+            return rows.length > 0;
+        } catch (error) {
+            logger.error(`[CellRepository] Error checking if pallet ID ${palletId} exists:`, error);
+            throw error;
+        }
+    }
 }
 
 module.exports = new CellRepository();

@@ -10,15 +10,19 @@ class PLCManager {
     }
 
     async initializePLC(plcId, config, tags, options) {
-        logger.info(`[PLCManager] Initializing ${plcId}...`);
 
         plcStateManager.initializePLCState(plcId, { is_active: true });
 
         const reader = new InitPlc(config, tags, options);
+
+        // Add error listener to prevent app crash on unhandled error events
+        reader.on('error', (err) => {
+            logger.error(`[PLCManager] Error from PLC '${plcId}':`, err || 'Unknown PLC error');
+        });
+
         await reader.start();
 
         this.plcReaders[plcId] = reader;
-        logger.info(`[PLCManager] ${plcId} initialized successfully`);
 
         return reader;
     }
@@ -34,7 +38,6 @@ class PLCManager {
         await Promise.all(initPromises);
 
         this.isInitialized = true;
-        logger.info(`[PLCManager] All ${plcsConfig.length} PLCs initialized successfully!\n`);
     }
 
     getPLCReader(plcId) {
@@ -52,6 +55,15 @@ class PLCManager {
             return undefined;
         }
         return reader.getValue(varName);
+    }
+
+    async writeValue(plcId, varName, value) {
+        const reader = this.plcReaders[plcId];
+        if (!reader) {
+            logger.warn(`[PLCManager] PLC '${plcId}' not found`);
+            return { error: 'PLC not found' };
+        }
+        return await reader.writeItems(varName, value);
     }
 
     getAllValues(plcId) {
@@ -89,15 +101,12 @@ class PLCManager {
     }
 
     async shutdownAll() {
-        logger.info('\n[PLCManager] Shutting down all PLCs...');
 
         const shutdownPromises = Object.entries(this.plcReaders).map(([plcId, reader]) => {
-            logger.info(`[PLCManager] Shutting down ${plcId}...`);
             return reader.shutdown();
         });
 
         await Promise.all(shutdownPromises);
-        logger.info('[PLCManager] All PLCs shut down successfully');
     }
 
     isPlcConnected(plcId) {
