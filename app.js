@@ -32,10 +32,10 @@ app.use(errorHandler);
 
 async function startServer() {
     try {
-        // logger.debug('[Server] Initializing PLCs...');
-        // await plcManager.initializeMultiplePLCs(plcsConfig);
-        // healthController.setInitialized(true);
-        // logger.info('[Server] All PLCs initialized successfully!');
+        logger.debug('[Server] Initializing PLCs...');
+        await plcManager.initializeMultiplePLCs(plcsConfig);
+        healthController.setInitialized(true);
+        logger.info('[Server] All PLCs initialized successfully!');
 
         // Initialize 3-Pillar System
         logger.info('[Server] Initializing 3-Pillar Intelligent Traffic Management System...');
