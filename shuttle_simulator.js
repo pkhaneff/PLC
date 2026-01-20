@@ -107,7 +107,7 @@ async function processMovement(state) {
             }
 
             // Publish event AFTER updating state
-            publishEvent(arrivalEvent, state.no, { taskId: state.taskInfo.taskId });
+            publishEvent(arrivalEvent, state.no, { meta: state.taskInfo });
         } else {
             console.warn(`[Simulator] Shuttle ${state.no} completed a path but had no onArrival event stored.`);
         }

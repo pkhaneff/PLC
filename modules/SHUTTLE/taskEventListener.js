@@ -16,6 +16,8 @@ const { TASK_ACTIONS, MQTT_TOPICS, SHUTTLE_STATUS, warehouses } = require('../..
 const redisClient = require('../../redis/init.redis');
 const CellRepository = require('../../repository/cell.repository');
 const controller = require('../../controllers/shuttle.controller');
+const MissionCoordinatorService = require('./MissionCoordinatorService');
+const lifterService = require('../Lifter/lifterService');
 
 const MQTT_BROKER_URL = process.env.MQTT_URL || 'mqtt://localhost:1883';
 const SHUTTLE_IDLE_STATUS = 8; // Define constant for IDLE status
@@ -74,9 +76,13 @@ class TaskEventListener {
       const eventPayload = JSON.parse(message.toString());
       let { event, taskId, shuttleId } = eventPayload;
 
-      // Try to extract taskId from taskInfo if not at top level
-      if (!taskId && eventPayload.taskInfo && eventPayload.taskInfo.taskId) {
-        taskId = eventPayload.taskInfo.taskId;
+      // Try to extract taskId from taskInfo or meta if not at top level
+      if (!taskId) {
+        if (eventPayload.taskInfo && eventPayload.taskInfo.taskId) {
+          taskId = eventPayload.taskInfo.taskId;
+        } else if (eventPayload.meta && eventPayload.meta.taskId) {
+          taskId = eventPayload.meta.taskId;
+        }
       }
 
       // Only warn for missing critical fields on events that require them for core logic
@@ -97,13 +103,19 @@ class TaskEventListener {
           break;
 
         case 'PICKUP_COMPLETE':
-          if (taskId) { // taskId is guaranteed to be present by checks above
+          if (taskId) {
             await this.handlePickupComplete(taskId, shuttleId);
           }
           break;
 
+        case 'ARRIVED_AT_LIFTER':
+          if (shuttleId) {
+            await this.handleArrivedAtLifter(shuttleId, eventPayload);
+          }
+          break;
+
         case 'TASK_COMPLETE':
-          if (taskId) { // taskId is guaranteed to be present by checks above
+          if (taskId) {
             await this.handleTaskComplete(taskId, shuttleId);
           }
           break;
@@ -240,7 +252,6 @@ class TaskEventListener {
   }
 
   async handlePickupComplete(taskId, shuttleId) {
-
     const taskDetails = await shuttleTaskQueueService.getTaskDetails(taskId);
     if (!taskDetails) {
       logger.error(`[TaskEventListener] Cannot find details for task ${taskId} after pickup.`);
@@ -248,183 +259,152 @@ class TaskEventListener {
     }
 
     const { pickupNodeQr, pickupNodeFloorId, endNodeQr, endNodeFloorId } = taskDetails;
-    const pickupName = await cellService.getCachedDisplayName(pickupNodeQr, pickupNodeFloorId);
-    const endName = await cellService.getCachedDisplayName(endNodeQr, endNodeFloorId);
+    const taskKey = shuttleTaskQueueService.getTaskKey(taskId);
 
     await shuttleTaskQueueService.updateTaskStatus(taskId, 'in_progress');
-
-    const taskKey = shuttleTaskQueueService.getTaskKey(taskId);
     await redisClient.hSet(taskKey, 'pickupCompleted', 'true');
 
-    const occupiedMap = await NodeOccupationService.getAllOccupiedNodes();
-    const avoidNodes = Object.keys(occupiedMap).filter(qr =>
-      qr !== pickupNodeQr &&
-      qr !== endNodeQr
-    );
-
-    const trafficData = await PathCacheService.getAllActivePaths();
-    logger.debug(`[TaskEventListener] Traffic data for pathfinding: ${JSON.stringify(trafficData.map(t => t.shuttleId))}`);
-
+    // --- ROW COORDINATION LOGIC (THACO SPECIFIC) ---
     const activeShuttleCount = await ShuttleCounterService.updateCounter();
-    let enforceOneWay = activeShuttleCount >= 2;
-
-    if (taskDetails.batchId) {
-      enforceOneWay = true;
-    }
+    let enforceOneWay = activeShuttleCount >= 2 || !!taskDetails.batchId;
 
     let targetRow = null;
     let actualEndNodeQr = endNodeQr;
 
     if (enforceOneWay) {
-      const batchId = taskDetails.batchId;
-
-      if (batchId) {
-        targetRow = await RowCoordinationService.assignRowForBatch(batchId, endNodeQr, endNodeFloorId);
-
+      if (taskDetails.batchId) {
+        targetRow = await RowCoordinationService.assignRowForBatch(taskDetails.batchId, endNodeQr, endNodeFloorId);
         if (!targetRow) {
-          logger.error(`[TaskEventListener] Cannot assign row for batch ${batchId}. Marking task as failed.`);
+          logger.error(`[TaskEventListener] Cannot assign row for batch ${taskDetails.batchId}.`);
           await shuttleTaskQueueService.updateTaskStatus(taskId, 'failed');
           return;
         }
 
         const isEndNodeInRow = await RowCoordinationService.isNodeInAssignedRow(endNodeQr, endNodeFloorId, targetRow);
-
         if (!isEndNodeInRow) {
-          logger.warn(`[TaskEventListener] EndNode ${endName} không nằm trong assigned row ${targetRow}. Tìm node thay thế...`);
-
           const nearestNode = await RowCoordinationService.findNearestNodeInRow(pickupNodeQr, targetRow, endNodeFloorId);
-
           if (!nearestNode) {
-            logger.error(`[TaskEventListener] Cannot find available node in assigned row ${targetRow}. Marking task as failed.`);
             await shuttleTaskQueueService.updateTaskStatus(taskId, 'failed');
             return;
           }
-
           actualEndNodeQr = nearestNode;
         }
-
       } else {
         const endNodeCell = await cellService.getCellByQrCode(endNodeQr, endNodeFloorId);
-        if (endNodeCell) {
-          targetRow = endNodeCell.row;
-        }
+        if (endNodeCell) targetRow = endNodeCell.row;
       }
     } else {
       const endNodeCell = await cellService.getCellByQrCode(endNodeQr, endNodeFloorId);
-      if (endNodeCell) {
-        targetRow = endNodeCell.row;
-      }
+      if (endNodeCell) targetRow = endNodeCell.row;
     }
 
     let requiredDirection = null;
     if (enforceOneWay && targetRow !== null) {
       requiredDirection = await RowDirectionManager.getRowDirection(targetRow, endNodeFloorId);
-
       if (!requiredDirection) {
-        try {
-          const pickupCell = await cellService.getCellByQrCode(pickupNodeQr, endNodeFloorId);
-          const endCell = await cellService.getCellByQrCode(actualEndNodeQr, endNodeFloorId);
-
-          if (pickupCell && endCell) {
-            if (endCell.col < pickupCell.col) {
-              requiredDirection = 2; // RIGHT_TO_LEFT
-            } else {
-              requiredDirection = 1; // LEFT_TO_RIGHT
-            }
-          } else {
-            requiredDirection = 1;
-          }
-        } catch (e) {
-          requiredDirection = 1;
-        }
-      } else {
+        const pickupCell = await cellService.getCellByQrCode(pickupNodeQr, endNodeFloorId);
+        const endCell = await cellService.getCellByQrCode(actualEndNodeQr, endNodeFloorId);
+        requiredDirection = (pickupCell && endCell && endCell.col < pickupCell.col) ? 2 : 1;
       }
 
-      const locked = await RowDirectionManager.lockRowDirection(
-        targetRow,
-        endNodeFloorId,
-        requiredDirection,
-        shuttleId
-      );
-
+      const locked = await RowDirectionManager.lockRowDirection(targetRow, endNodeFloorId, requiredDirection, shuttleId);
       if (!locked) {
-        logger.error(`[TaskEventListener] Cannot lock row ${targetRow} for shuttle ${shuttleId}. Row has opposite traffic direction. Marking task as failed.`);
         await shuttleTaskQueueService.updateTaskStatus(taskId, 'failed');
         return;
       }
     }
+    // --- END ROW COORDINATION ---
 
-    let path2 = await findShortestPath(
-      pickupNodeQr,
-      actualEndNodeQr,
-      endNodeFloorId,
-      {
-        avoid: avoidNodes,
-        isCarrying: true,
-        trafficData: trafficData,
-        lastStepAction: TASK_ACTIONS.DROP_OFF,
-        enforceOneWay: enforceOneWay,
-        targetRow: targetRow,
-        requiredDirection: requiredDirection
-      }
-    );
-
-    if (!path2) {
-      logger.warn(`[TaskEventListener] Soft avoidance failed for Path 2. Trying direct path (relying on Priority/Yield).`);
-      path2 = await findShortestPath(
-        pickupNodeQr,
+    try {
+      // 1. Calculate Path using Unified Mission Coordinator
+      const missionPayload = await MissionCoordinatorService.calculateNextSegment(
+        shuttleId,
         actualEndNodeQr,
         endNodeFloorId,
         {
-          avoid: [],
+          taskId: taskId,
+          onArrival: 'TASK_COMPLETE',
+          pickupNodeQr: pickupNodeQr,
+          endNodeQr: actualEndNodeQr,
+          itemInfo: taskDetails.itemInfo,
           isCarrying: true,
-          trafficData: trafficData,
-          lastStepAction: TASK_ACTIONS.DROP_OFF,
           enforceOneWay: enforceOneWay,
           targetRow: targetRow,
           requiredDirection: requiredDirection
         }
       );
-    }
 
-    if (!path2) {
-      logger.error(`[TaskEventListener] Failed to find Path 2 for task ${taskId}. Marking as failed.`);
-      await shuttleTaskQueueService.updateTaskStatus(taskId, 'failed');
-      return;
-    }
+      // 2. Update shuttle package state in Redis
+      const currentShuttleState = await getShuttleState(shuttleId) || {};
+      await updateShuttleState(shuttleId, { ...currentShuttleState, isCarrying: true, packageStatus: 1 });
+      await redisClient.hSet(taskKey, 'isCarrying', 'true');
 
-    if (!path2 || !path2.totalStep || path2.totalStep === 0) {
-      logger.error(`[TaskEventListener] Path calculated for task ${taskId} has no steps.`);
-      await shuttleTaskQueueService.updateTaskStatus(taskId, 'failed');
-      return;
-    }
-
-    await PathCacheService.savePath(shuttleId, path2);
-
-    await redisClient.hSet(taskKey, 'isCarrying', 'true');
-
-    const currentShuttleState = await getShuttleState(shuttleId) || {};
-    await updateShuttleState(shuttleId, { ...currentShuttleState, isCarrying: true, packageStatus: 1 });
-
-    const pathSteps = path2.steps || path2;
-    const missionTopic = `${MQTT_TOPICS.SEND_MISSION}/${shuttleId}`;
-
-    const missionPayload = {
-      ...pathSteps,
-      meta: {
-        taskId: taskId,
-        onArrival: 'TASK_COMPLETE',
-        step: 'move_to_end',
-        pickupNodeQr: pickupNodeQr,
-        endNodeQr: actualEndNodeQr,
-        itemInfo: taskDetails.itemInfo
+      // 3. Send mission
+      const missionTopic = `${MQTT_TOPICS.SEND_MISSION}/${shuttleId}`;
+      if (this.dispatcher && this.dispatcher.publishMissionWithRetry) {
+        await this.dispatcher.publishMissionWithRetry(missionTopic, missionPayload, shuttleId);
+      } else {
+        mqttService.publishToTopic(missionTopic, missionPayload);
       }
-    };
 
-    if (this.dispatcher && this.dispatcher.publishMissionWithRetry) {
-      await this.dispatcher.publishMissionWithRetry(missionTopic, missionPayload, shuttleId);
-    } else {
-      mqttService.publishToTopic(missionTopic, missionPayload);
+    } catch (error) {
+      logger.error(`[TaskEventListener] Error in unified Path 2 calculation: ${error.message}`);
+      await shuttleTaskQueueService.updateTaskStatus(taskId, 'failed');
+    }
+  }
+
+  /**
+   * Xử lý khi Shuttle đã tới cửa Lifter
+   */
+  async handleArrivedAtLifter(shuttleId, eventPayload) {
+    try {
+      const { finalTargetQr, finalTargetFloorId, taskId, isCarrying } = eventPayload.meta || {};
+      if (!finalTargetFloorId || !taskId) {
+        logger.error(`[TaskEventListener] ARRIVED_AT_LIFTER missing meta data for ${shuttleId}`);
+        return;
+      }
+
+      logger.info(`[TaskEventListener] Shuttle ${shuttleId} arrived at Lifter. Calling lifter to target floor ${finalTargetFloorId}.`);
+
+      // 1. Gọi Lifter tới tầng đích
+      // LƯU Ý: Trong thực tế, Shuttle phải ĐI VÀO Lifter trước khi Lifter di chuyển.
+      // Ở đây chúng ta mô phỏng: Lifter di chuyển Shuttle tới tầng đích.
+
+      const moveResult = await lifterService.moveLifterToFloor(finalTargetFloorId);
+      if (!moveResult.success) {
+        throw new Error(`Failed to move lifter: ${moveResult.message}`);
+      }
+
+      logger.info(`[TaskEventListener] Lifter reached floor ${finalTargetFloorId}. Shuttle ${shuttleId} recalculating final leg.`);
+
+      // 2. Sau khi tới tầng đích, Shuttle tính toán chặng cuối cùng từ Lifter tới Đích
+      // Logic: Nếu chưa mang hàng (isCarrying=false) thì là chặng đi lấy hàng (PICKUP), ngược lại là đi cất hàng (TASK_COMPLETE)
+      const targetArrivalEvent = isCarrying ? 'TASK_COMPLETE' : 'PICKUP_COMPLETE';
+      const targetAction = isCarrying ? TASK_ACTIONS.DROP_OFF : TASK_ACTIONS.PICK_UP;
+
+      const missionPayload = await MissionCoordinatorService.calculateNextSegment(
+        shuttleId,
+        finalTargetQr,
+        finalTargetFloorId,
+        {
+          taskId: taskId,
+          onArrival: targetArrivalEvent,
+          isCarrying: isCarrying,
+          action: targetAction,
+          currentFloorId: finalTargetFloorId // Thông báo cho logic là đang ở tầng đích
+        }
+      );
+
+      // 3. Gửi mission chặng cuối
+      const missionTopic = `${MQTT_TOPICS.SEND_MISSION}/${shuttleId}`;
+      if (this.dispatcher && this.dispatcher.publishMissionWithRetry) {
+        await this.dispatcher.publishMissionWithRetry(missionTopic, missionPayload, shuttleId);
+      } else {
+        mqttService.publishToTopic(missionTopic, missionPayload);
+      }
+
+    } catch (error) {
+      logger.error(`[TaskEventListener] Error in handleArrivedAtLifter for ${shuttleId}: ${error.message}`);
     }
   }
 

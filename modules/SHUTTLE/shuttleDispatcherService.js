@@ -10,6 +10,7 @@ const ShuttleCounterService = require('./ShuttleCounterService');
 const { TASK_ACTIONS, MQTT_TOPICS, MISSION_CONFIG } = require('../../config/shuttle.config');
 const { getShuttleState, updateShuttleState } = require('./shuttleStateCache');
 const NodeOccupationService = require('./NodeOccupationService');
+const MissionCoordinatorService = require('./MissionCoordinatorService');
 
 const PICKUP_LOCK_TIMEOUT = 300; // 5 minutes, same as endnode for consistency
 
@@ -95,7 +96,8 @@ class ShuttleDispatcherService {
     const { col: col2, row: row2, floor_id: floor2 } = coords2;
 
     if (floor1 !== floor2) {
-      return Infinity;
+      // Thêm penalty lớn cho việc đổi tầng (ví dụ: 1000 units)
+      return 1000 + Math.abs(col1 - col2) + Math.abs(row1 - row2);
     }
 
     return Math.abs(col1 - col2) + Math.abs(row1 - row2);
@@ -157,14 +159,7 @@ class ShuttleDispatcherService {
           continue;
         }
 
-        shuttleCurrentCoords = candidates.find(c => c.floor_id === taskPickupCoords.floor_id);
-
-        if (!shuttleCurrentCoords) {
-          // Shuttle is likely on a different floor
-          const actualFloor = candidates[0].floor_id;
-          logger.debug(`Shuttle ${shuttle.id} is on floor ${actualFloor}, but task is on floor ${taskPickupCoords.floor_id}. Skipping.`);
-          continue;
-        }
+        shuttleCurrentCoords = candidates[0]; // Lấy thông tin tầng thực tế của shuttle
 
         const distance = await this.calculateDistanceHeuristic(shuttleCurrentCoords, taskPickupCoords);
 
@@ -264,69 +259,22 @@ class ShuttleDispatcherService {
         throw new Error(`Shuttle ${shuttleId} state not found`);
       }
 
-      // 1. Calculate Path (Shuttle -> Pickup)
-      const occupiedMap = await NodeOccupationService.getAllOccupiedNodes();
-
-      const currentNode = shuttleState.current_node || shuttleState.qrCode;
-      const avoidNodes = Object.keys(occupiedMap).filter(qr =>
-        qr !== currentNode &&
-        qr !== task.pickupNodeQr
-      );
-
-      const trafficData = await PathCacheService.getAllActivePaths();
-
-      let fullPath = await findShortestPath(
-        currentNode,
+      // 1. Calculate Path using Unified Mission Coordinator
+      const missionPayload = await MissionCoordinatorService.calculateNextSegment(
+        shuttleId,
         task.pickupNodeQr,
         task.pickupNodeFloorId,
         {
-          avoid: avoidNodes,
-          isCarrying: false,
-          trafficData: trafficData,
-          lastStepAction: TASK_ACTIONS.PICK_UP
+          taskId: task.taskId,
+          onArrival: 'PICKUP_COMPLETE',
+          pickupNodeQr: task.pickupNodeQr,
+          endNodeQr: task.endNodeQr,
+          itemInfo: task.itemInfo,
+          isCarrying: false
         }
       );
 
-      // Fallback
-      if (!fullPath) {
-        logger.warn(`[ShuttleDispatcherService] Soft avoidance failed for shuttle ${shuttleId}. Trying direct path.`);
-        fullPath = await findShortestPath(
-          currentNode,
-          task.pickupNodeQr,
-          task.pickupNodeFloorId,
-          {
-            isCarrying: false,
-            trafficData: trafficData,
-            lastStepAction: TASK_ACTIONS.PICK_UP
-          }
-        );
-      }
-
-      if (!fullPath || !fullPath.totalStep || fullPath.totalStep === 0) {
-        const fromName = await cellService.getDisplayNameWithoutFloor(currentNode);
-        const toName = await cellService.getCachedDisplayName(task.pickupNodeQr, task.pickupNodeFloorId);
-        throw new Error(`Failed to find valid path from ${fromName} to ${toName}`);
-      }
-
-      // 2. Save the path
-      await PathCacheService.savePath(shuttleId, fullPath);
-
-      const pathSteps = fullPath.steps || fullPath;
-
-      // 3. Send mission via MQTT
       const missionTopic = `${MQTT_TOPICS.SEND_MISSION}/${shuttleId}`;
-      const missionPayload = {
-        ...pathSteps,
-        meta: {
-          taskId: task.taskId,
-          onArrival: 'PICKUP_COMPLETE',
-          step: 'move_to_pickup',
-          pickupNodeQr: task.pickupNodeQr,
-          endNodeQr: task.endNodeQr,
-          itemInfo: task.itemInfo
-        }
-      };
-
       await this.publishMissionWithRetry(missionTopic, missionPayload, shuttleId);
 
       // 4. Update Task Status & Shuttle State

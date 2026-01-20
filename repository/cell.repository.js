@@ -274,15 +274,24 @@ class CellRepository {
      * @param {number} floorId - Floor ID
      * @returns {Promise<Array>} Danh sách tất cả node khả dụng trong row đầu tiên
      */
-    async findAvailableNodesByFIFO(palletType, floorId) {
-        const query = `
+    async findAvailableNodesByFIFO(palletType, floorId = null) {
+        let query = `
             SELECT c.*
             FROM cells c
             WHERE c.pallet_classification = ?
-              AND c.floor_id = ?
               AND c.is_has_box = 0
               AND c.is_block = 0
               AND c.cell_type = 'storage'
+        `;
+
+        const params = [palletType];
+
+        if (floorId) {
+            query += ` AND c.floor_id = ? `;
+            params.push(floorId);
+        }
+
+        query += `
             ORDER BY
               c.floor_id ASC,
               c.\`row\` ASC,
@@ -290,7 +299,7 @@ class CellRepository {
         `;
 
         try {
-            const [allNodes] = await pool.query(query, [palletType, floorId]);
+            const [allNodes] = await pool.query(query, params);
 
             if (!allNodes || allNodes.length === 0) {
                 return [];

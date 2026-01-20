@@ -1,5 +1,7 @@
 const pool = require('../../config/database');
 const lifterQueueService = require('./lifterQueueService');
+const plcManager = require('../PLC/plcManager');
+const { logger } = require('../../logger/logger');
 
 class LifterService {
   /**
@@ -25,6 +27,18 @@ class LifterService {
       console.error('Error fetching lifter cell on floor:', error);
       throw error;
     }
+  }
+
+  /**
+   * Chuyển đổi ID tầng từ Database sang chỉ số tầng của Lifter (1 hoặc 2)
+   */
+  mapFloorIdToLifterIndex(floorId) {
+    // THACO logic: 138 -> 1 (Tầng 1), 139 -> 2 (Tầng 2)
+    if (floorId == 138) return 1;
+    if (floorId == 139) return 2;
+    // Nếu truyền thẳng 1 hoặc 2 (legacy)
+    if (floorId == 1 || floorId == 2) return floorId;
+    return null;
   }
 
   /**
@@ -325,6 +339,83 @@ class LifterService {
       return await lifterQueueService.clearAllQueues();
     } catch (error) {
       console.error('Error clearing all queues:', error);
+      throw error;
+    }
+  }
+
+  async moveLifterToFloor(logicalFloorId, plcId = 'PLC_1') {
+    try {
+      const targetFloor = this.mapFloorIdToLifterIndex(logicalFloorId);
+
+      if (!targetFloor) {
+        throw new Error(`Tầng mục tiêu không hợp lệ: ${logicalFloorId}. Phải là 138 (Tầng 1) hoặc 139 (Tầng 2).`);
+      }
+
+      logger.info(`[LifterService] Yêu cầu di chuyển lifter tới tầng vật lý: ${targetFloor} (ID: ${logicalFloorId})`);
+
+      // 1. Đọc vị trí hiện tại
+      const posF1 = plcManager.getValue(plcId, 'LIFTER_1_POS_F1');
+      const posF2 = plcManager.getValue(plcId, 'LIFTER_1_POS_F2');
+      const currentFloor = posF1 ? 1 : (posF2 ? 2 : 0);
+      console.log("currentFloor", currentFloor)
+
+      if (currentFloor === targetFloor) {
+        return { success: true, message: `Lifter đã ở tầng ${targetFloor}`, currentFloor };
+      }
+
+      // 2. Ghi lệnh điều khiển di chuyển
+      const ctrlTag = targetFloor === 1 ? 'LIFTER_1_CTRL_F1' : 'LIFTER_1_CTRL_F2';
+      const writeResult = await plcManager.writeValue(plcId, ctrlTag, true);
+
+      if (writeResult?.error) {
+        throw new Error(`Không thể ghi lệnh điều khiển xuống PLC: ${writeResult.error}`);
+      }
+
+      // 3. Giám sát lỗi và di chuyển (mô phỏng hoặc thực tế)
+      let moveTime = 0;
+      const maxMoveTime = 2000;
+      const checkInterval = 500;
+
+      const monitorMovement = () => new Promise((resolve, reject) => {
+        const timer = setInterval(async () => {
+          moveTime += checkInterval;
+
+          // Kiểm tra lỗi
+          const hasError = plcManager.getValue(plcId, 'LIFTER_1_ERROR');
+          if (hasError) {
+            clearInterval(timer);
+            return reject(new Error('Lifter gặp lỗi trong quá trình di chuyển!'));
+          }
+
+          logger.debug(`[LifterService] Đang di chuyển... (${moveTime}ms)`);
+
+          if (moveTime >= maxMoveTime) {
+            clearInterval(timer);
+            resolve();
+          }
+        }, checkInterval);
+      });
+
+      await monitorMovement();
+
+      // 4. Khi đến nơi, cập nhật vị trí sensor (Giả lập cập nhật PLC tags)
+      const targetPosTag = targetFloor === 1 ? 'LIFTER_1_POS_F1' : 'LIFTER_1_POS_F2';
+      const oldPosTag = targetFloor === 1 ? 'LIFTER_1_POS_F2' : 'LIFTER_1_POS_F1';
+
+      await plcManager.writeValue(plcId, targetPosTag, true);
+      await plcManager.writeValue(plcId, oldPosTag, false);
+      await plcManager.writeValue(plcId, ctrlTag, false); // Tắt lệnh điều khiển
+
+      logger.info(`[LifterService] Đã đến tầng ${targetFloor}. Cập nhật sensor.`);
+
+      return {
+        success: true,
+        message: `Đã di chuyển lifter tới tầng ${targetFloor} thành công`,
+        previousFloor: currentFloor,
+        currentFloor: targetFloor
+      };
+    } catch (error) {
+      logger.error(`[LifterService] Error in moveLifterToFloor: ${error.message}`);
       throw error;
     }
   }

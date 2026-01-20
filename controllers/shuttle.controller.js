@@ -218,14 +218,14 @@ class ShuttleController {
 
             const pickupNodeFloorId = cellInfo.floor_id;
 
-            // Tìm ô trống
-            const availableNodes = await CellRepository.findAvailableNodesByFIFO(palletType, pickupNodeFloorId);
+            // Tìm ô trống trên toàn bộ Warehouse (Global Scan)
+            const availableNodes = await CellRepository.findAvailableNodesByFIFO(palletType);
             if (!availableNodes || availableNodes.length === 0) {
                 // Return pallet to queue if no storage available
                 await redisClient.lPush(INBOUND_PALLET_QUEUE_KEY, JSON.stringify(selectedPallet));
                 return res.status(409).json({
                     success: false,
-                    error: `Không còn ô trống cho loại pallet ${palletType} trên tầng ${pickupNodeFloorId}`
+                    error: `Không còn ô trống cho loại pallet ${palletType} trong toàn bộ kho`
                 });
             }
 
@@ -417,10 +417,9 @@ class ShuttleController {
                 return;
             }
 
-            // 3. Tìm row khả dụng theo FIFO
+            // 3. Tìm row khả dụng theo FIFO trên toàn Warehouse
             const availableNodesInRow = await CellRepository.findAvailableNodesByFIFO(
-                batch.palletType,
-                batch.pickupNodeFloorId
+                batch.palletType
             );
 
             if (!availableNodesInRow || availableNodesInRow.length === 0) {
