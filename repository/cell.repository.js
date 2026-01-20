@@ -296,13 +296,11 @@ class CellRepository {
                 return [];
             }
 
-            // Lấy row đầu tiên
             const firstRow = allNodes[0].row;
 
-            // Filter tất cả node trong row đó
             const nodesInFirstRow = allNodes.filter(n => n.row === firstRow);
 
-            logger.info(`[CellRepository] Found ${nodesInFirstRow.length} available nodes in row ${firstRow} (floor ${floorId}, pallet ${palletType})`);
+            (`[CellRepository] Found ${nodesInFirstRow.length} available nodes in row ${firstRow} (floor ${floorId}, pallet ${palletType})`);
             return nodesInFirstRow;
 
         } catch (error) {
@@ -311,13 +309,6 @@ class CellRepository {
         }
     }
 
-    /**
-     * Lấy node khả dụng trong 1 row cụ thể (từ trái qua phải)
-     * @param {number} floorId - Floor ID
-     * @param {number} row - Row number
-     * @param {string} palletType - Loại pallet
-     * @returns {Promise<Array>} Danh sách node khả dụng trong row
-     */
     async getAvailableNodesInRow(floorId, row, palletType) {
         const query = `
             SELECT c.*

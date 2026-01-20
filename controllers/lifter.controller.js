@@ -344,8 +344,6 @@ class LifterController {
       const posF2 = plcManager.getValue(plcId, 'LIFTER_1_POS_F2');
       const currentFloor = posF1 ? 1 : (posF2 ? 2 : 0);
 
-      logger.info(`[LifterSim] Yêu cầu tới tầng ${targetFloor}. Vị trí hiện tại: Tầng ${currentFloor || 'Không xác định'}`);
-
       if (currentFloor === targetFloor) {
         return res.json({
           success: true,
@@ -361,8 +359,6 @@ class LifterController {
       if (writeResult?.error) {
         throw new Error(`Không thể ghi lệnh điều khiển xuống PLC: ${writeResult.error}`);
       }
-
-      logger.info(`[LifterSim] Đã ghi lệnh di chuyển: ${ctrlTag} = true`);
 
       // 3. Giám sát lỗi và di chuyển (mô phỏng)
       let moveTime = 0;
