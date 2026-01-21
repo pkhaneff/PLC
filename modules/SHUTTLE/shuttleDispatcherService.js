@@ -1,7 +1,7 @@
 const { logger } = require('../../logger/logger');
 const shuttleTaskQueueService = require('./shuttleTaskQueueService');
 const { getAllShuttleStates } = require('./shuttleStateCache'); // Use in-memory cache
-const { publishToTopic } = require('../../services/mqttService'); // To publish commands
+const { publishToTopic } = require('../../services/mqttClientService'); // To publish commands
 const cellService = require('./cellService'); // Using the alias NodeService internally
 const { findShortestPath } = require('./pathfinding');
 const ReservationService = require('../COMMON/reservationService'); // Import the new service
@@ -274,7 +274,7 @@ class ShuttleDispatcherService {
         }
       );
 
-      const missionTopic = `${MQTT_TOPICS.SEND_MISSION}/${shuttleId}`;
+      const missionTopic = `${MQTT_TOPICS.HANDLE}/${shuttleId}`;
       await this.publishMissionWithRetry(missionTopic, missionPayload, shuttleId);
 
       // 4. Update Task Status & Shuttle State

@@ -119,9 +119,21 @@ class MissionCoordinatorService {
 
             const pathSteps = fullPath.steps || fullPath;
 
+            // Tạo running_path_simulation từ pathSteps
+            const runningPathSimulation = [];
+            for (let i = 1; i <= pathSteps.totalStep; i++) {
+                const stepString = pathSteps[`step${i}`];
+                if (stepString) {
+                    // Extract QR code from "QRCODE>direction:action" format
+                    const qrCode = stepString.split('>')[0];
+                    runningPathSimulation.push(qrCode);
+                }
+            }
+
             // Tạo payload cho mission
             return {
                 ...pathSteps,
+                running_path_simulation: runningPathSimulation,
                 meta: {
                     taskId: options.taskId,
                     onArrival: onArrival,

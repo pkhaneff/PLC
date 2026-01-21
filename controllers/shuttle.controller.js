@@ -8,6 +8,7 @@ const { getShuttleState } = require('../modules/SHUTTLE/shuttleStateCache');
 const shuttleConfig = require('../config/shuttle.config');
 const CellRepository = require('../repository/cell.repository');
 const shuttleDispatcherService = require('../modules/SHUTTLE/shuttleDispatcherService');
+const { publishToTopic } = require('../services/mqttClientService');
 
 const TASK_STAGING_QUEUE_KEY = 'task:staging_queue';
 const INBOUND_PALLET_QUEUE_KEY = 'shuttle:inbound_pallet_queue';
@@ -201,7 +202,12 @@ class ShuttleController {
             });
         }
 
-        // 3. Khởi tạo nhiệm vụ (Tìm ô trống, khóa ô, và gửi cho dispatcher)
+        // 3. Thêm shuttle vào executing mode (để tự động lấy tasks tiếp theo)
+        const ExecutingModeService = require('../modules/SHUTTLE/ExecutingModeService');
+        await ExecutingModeService.addShuttle(shuttle_code);
+        logger.info(`[Controller] Shuttle ${shuttle_code} entered executing mode`);
+
+        // 4. Khởi tạo nhiệm vụ (Tìm ô trống, khóa ô, và gửi cho dispatcher)
         try {
 
             // Lấy pickup node từ config
@@ -257,9 +263,15 @@ class ShuttleController {
             }
             await redisClient.hSet(shuttleTaskQueueService.getTaskKey(taskId), taskDetailsToSave);
 
-            // 5. Dispatch task trực tiếp cho shuttle được chỉ định
+            // 5. QUAN TRỌNG: Gửi lệnh run permission TRƯỚC để shuttle sẵn sàng nhận mission
+            const runTopic = `shuttle/run/${shuttle_code}`;
+            publishToTopic(runTopic, '1');
+            logger.info(`[Controller] Step 1: Sent run permission to shuttle ${shuttle_code}`);
+
+            // 6. Dispatch task trực tiếp cho shuttle được chỉ định (SAU khi đã có run permission)
             const dispatcher = new shuttleDispatcherService(req.app.get('io'));
             await dispatcher.dispatchTaskToShuttle(taskData, shuttle_code);
+            logger.info(`[Controller] Step 2: Dispatched task to shuttle ${shuttle_code}`);
 
             return res.status(200).json({
                 success: true,
@@ -464,6 +476,251 @@ class ShuttleController {
             logger.error(`[Controller] Error processing batch row for ${batchId}:`, error);
         }
     };
+
+    /**
+     * Tự động xử lý inbound pallet queue khi shuttle hoàn thành task
+     * Logic:
+     * - Kiểm tra queue có item không
+     * - Tìm shuttle IDLE
+     * - Pop pallet từ queue và dispatch
+     * - Tự động chọn shuttle gần nhất
+     */
+    /**
+     * Tự động xử lý inbound pallet queue cho shuttles đang trong execute mode
+     * @param {string} shuttleId - ID của shuttle vừa complete (ưu tiên shuttle này)
+     * @returns {Promise<object>}
+     */
+    autoProcessInboundQueue = async (shuttleId = null) => {
+        try {
+            const ExecutingModeService = require('../modules/SHUTTLE/ExecutingModeService');
+
+            // 1. Kiểm tra queue có item không
+            const queueLength = await redisClient.lLen(INBOUND_PALLET_QUEUE_KEY);
+            if (queueLength === 0) {
+                logger.debug('[Controller] autoProcessInboundQueue: No items in inbound_pallet_queue');
+                return { success: false, reason: 'queue_empty' };
+            }
+
+            // 2. Tìm shuttle IDLE trong executing mode
+            const { getAllShuttleStates } = require('../modules/SHUTTLE/shuttleStateCache');
+            const allShuttles = await getAllShuttleStates();
+            const executingShuttles = await ExecutingModeService.getExecutingShuttles();
+
+            // Ưu tiên shuttle vừa complete task (nếu có và đang trong executing mode)
+            let targetShuttle = null;
+
+            if (shuttleId) {
+                const isExecuting = await ExecutingModeService.isShuttleExecuting(shuttleId);
+                if (isExecuting) {
+                    const shuttle = allShuttles.find(s => (s.no || s.id) === shuttleId);
+                    if (shuttle && shuttle.shuttleStatus === 8) { // IDLE
+                        targetShuttle = shuttle;
+                        logger.debug(`[Controller] autoProcessInboundQueue: Using shuttle ${shuttleId} (just completed)`);
+                    }
+                }
+            }
+
+            // Nếu không có shuttle cụ thể, tìm bất kỳ shuttle IDLE nào trong executing mode
+            if (!targetShuttle) {
+                const idleExecutingShuttles = allShuttles.filter(s => {
+                    const id = s.no || s.id;
+                    return s.shuttleStatus === 8 && executingShuttles.includes(id);
+                });
+
+                if (idleExecutingShuttles.length === 0) {
+                    logger.debug('[Controller] autoProcessInboundQueue: No idle shuttles in executing mode');
+                    return { success: false, reason: 'no_idle_executing_shuttle' };
+                }
+
+                targetShuttle = idleExecutingShuttles[0];
+                logger.debug(`[Controller] autoProcessInboundQueue: Using shuttle ${targetShuttle.no || targetShuttle.id} from executing pool`);
+            }
+
+            const selectedShuttleId = targetShuttle.no || targetShuttle.id;
+
+            // 3. Pop pallet đầu tiên từ queue (FIFO)
+            const palletJson = await redisClient.lPop(INBOUND_PALLET_QUEUE_KEY);
+            if (!palletJson) {
+                logger.debug('[Controller] autoProcessInboundQueue: Queue became empty');
+                return { success: false, reason: 'queue_empty' };
+            }
+
+            const pallet = JSON.parse(palletJson);
+            const palletType = pallet.palletType;
+            const palletId = pallet.palletId;
+
+            // 4. Lấy pickup node từ config
+            // Nếu pallet không có rackId, lấy rack đầu tiên từ config
+            let rackId = pallet.rackId;
+            if (!rackId) {
+                const availableRacks = Object.keys(shuttleConfig.warehouses);
+                if (availableRacks.length === 0) {
+                    await redisClient.lPush(INBOUND_PALLET_QUEUE_KEY, palletJson);
+                    logger.error('[Controller] autoProcessInboundQueue: No warehouse config found');
+                    return { success: false, reason: 'no_warehouse_config' };
+                }
+                rackId = availableRacks[0]; // Lấy rack đầu tiên
+                logger.debug(`[Controller] autoProcessInboundQueue: No rackId in pallet, using default rack ${rackId}`);
+            }
+
+            const config = shuttleConfig.warehouses[rackId];
+            if (!config || !config.pickupNodeQr) {
+                // Đẩy lại vào queue nếu không tìm thấy config
+                await redisClient.lPush(INBOUND_PALLET_QUEUE_KEY, palletJson);
+                logger.error(`[Controller] autoProcessInboundQueue: No config for rack ${rackId}`);
+                return { success: false, reason: 'invalid_rack_config' };
+            }
+
+            const pickupNodeQr = config.pickupNodeQr;
+            const cellInfo = await cellService.getCellDeepInfoByQr(pickupNodeQr);
+            if (!cellInfo) {
+                await redisClient.lPush(INBOUND_PALLET_QUEUE_KEY, palletJson);
+                logger.error(`[Controller] autoProcessInboundQueue: QR '${pickupNodeQr}' not found`);
+                return { success: false, reason: 'invalid_pickup_node' };
+            }
+
+            const pickupNodeFloorId = cellInfo.floor_id;
+
+            // 5. Tìm ô trống trên toàn bộ Warehouse (Global Scan)
+            const availableNodes = await CellRepository.findAvailableNodesByFIFO(palletType);
+            if (!availableNodes || availableNodes.length === 0) {
+                // Đẩy lại vào queue nếu không còn ô trống
+                await redisClient.lPush(INBOUND_PALLET_QUEUE_KEY, palletJson);
+                logger.warn(`[Controller] autoProcessInboundQueue: No available nodes for pallet type ${palletType}`);
+                return { success: false, reason: 'no_available_nodes' };
+            }
+
+            const targetNode = availableNodes[0];
+
+            // 6. Tạo task object với shuttle đã được chọn (từ executing mode)
+            const taskId = `auto_${Date.now()}_${selectedShuttleId}`;
+            const taskData = {
+                taskId: taskId,
+                pickupNodeQr: pickupNodeQr,
+                pickupNodeFloorId: pickupNodeFloorId,
+                endNodeQr: targetNode.qr_code,
+                endNodeFloorId: targetNode.floor_id,
+                endNodeCol: targetNode.col,
+                endNodeRow: targetNode.row,
+                palletType: palletType,
+                itemInfo: palletId,
+                targetRow: targetNode.row,
+                targetFloor: targetNode.floor_id,
+                assignedShuttleId: selectedShuttleId,
+                status: 'pending',
+                timestamp: Date.now()
+            };
+
+            // 7. Lưu chi tiết task vào Redis
+            const taskDetailsToSave = { ...taskData };
+            if (taskDetailsToSave.itemInfo && typeof taskDetailsToSave.itemInfo === 'object') {
+                taskDetailsToSave.itemInfo = JSON.stringify(taskDetailsToSave.itemInfo);
+            }
+            await redisClient.hSet(shuttleTaskQueueService.getTaskKey(taskId), taskDetailsToSave);
+
+            // 8. Dispatch task trực tiếp cho shuttle được chọn
+            const dispatcher = new shuttleDispatcherService();
+            await dispatcher.dispatchTaskToShuttle(taskData, selectedShuttleId);
+
+            logger.info(`[Controller] autoProcessInboundQueue: Successfully dispatched task ${taskId} to shuttle ${selectedShuttleId}`);
+            return {
+                success: true,
+                taskId: taskId,
+                shuttleId: selectedShuttleId,
+                palletId: palletId,
+                destination: targetNode.qr_code
+            };
+
+        } catch (error) {
+            logger.error(`[Controller] autoProcessInboundQueue error: ${error.message}`, error);
+            return { success: false, reason: 'internal_error', error: error.message };
+        }
+    };
+
+    /**
+     * API để dừng shuttle khỏi executing mode
+     * Shuttle sẽ không tự động lấy task tiếp theo sau khi complete task hiện tại
+     */
+    stopExecutingMode = asyncHandler(async (req, res) => {
+        const { shuttle_code } = req.body;
+
+        if (!shuttle_code) {
+            return res.status(400).json({
+                success: false,
+                error: 'Thiếu shuttle_code'
+            });
+        }
+
+        const ExecutingModeService = require('../modules/SHUTTLE/ExecutingModeService');
+        const wasExecuting = await ExecutingModeService.isShuttleExecuting(shuttle_code);
+
+        if (!wasExecuting) {
+            return res.status(400).json({
+                success: false,
+                error: `Shuttle ${shuttle_code} không trong executing mode`
+            });
+        }
+
+        await ExecutingModeService.removeShuttle(shuttle_code);
+        logger.info(`[Controller] Shuttle ${shuttle_code} removed from executing mode`);
+
+        return res.status(200).json({
+            success: true,
+            message: `Shuttle ${shuttle_code} đã dừng executing mode`
+        });
+    });
+
+    /**
+     * API để lấy danh sách shuttles đang trong executing mode
+     */
+    getExecutingShuttles = asyncHandler(async (req, res) => {
+        const ExecutingModeService = require('../modules/SHUTTLE/ExecutingModeService');
+        const shuttles = await ExecutingModeService.getExecutingShuttles();
+        const count = shuttles.length;
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                shuttles: shuttles,
+                count: count
+            }
+        });
+    });
+
+    /**
+     * API để điều khiển quyền chạy của shuttle
+     * POST /api/v1/shuttle/run-control
+     * Body: { shuttle_code: "001", run: 1 } // 1 = cho phép chạy, 0 = không cho phép
+     */
+    setShuttleRunPermission = asyncHandler(async (req, res) => {
+        const { shuttle_code, run } = req.body;
+
+        if (!shuttle_code || run === undefined) {
+            return res.status(400).json({
+                success: false,
+                error: 'Thiếu shuttle_code hoặc run (0 hoặc 1)'
+            });
+        }
+
+        const runValue = parseInt(run, 10);
+        if (runValue !== 0 && runValue !== 1) {
+            return res.status(400).json({
+                success: false,
+                error: 'run phải là 0 (không chạy) hoặc 1 (chạy)'
+            });
+        }
+
+        // Publish lệnh đến MQTT topic shuttle/run/{code}
+        const topic = `shuttle/run/${shuttle_code}`;
+        publishToTopic(topic, runValue.toString());
+
+        logger.info(`[Controller] Set run permission for shuttle ${shuttle_code} to ${runValue}`);
+
+        return res.status(200).json({
+            success: true,
+            message: `Shuttle ${shuttle_code} run permission set to ${runValue} (${runValue === 1 ? 'ALLOWED' : 'NOT ALLOWED'})`
+        });
+    });
 }
 
 module.exports = new ShuttleController();

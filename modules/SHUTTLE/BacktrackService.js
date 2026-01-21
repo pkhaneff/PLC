@@ -1,7 +1,7 @@
 const { logger } = require('../../logger/logger');
 const { findShortestPath, findShortestPathByQrCode } = require('./pathfinding');
 const { getShuttleState } = require('./shuttleStateCache');
-const { publishToTopic } = require('../../services/mqttService');
+const { publishToTopic } = require('../../services/mqttClientService');
 const redisClient = require('../../redis/init.redis');
 const ParkingNodeService = require('./ParkingNodeService');
 const cellService = require('./cellService');

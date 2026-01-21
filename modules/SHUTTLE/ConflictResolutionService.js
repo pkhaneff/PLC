@@ -127,7 +127,7 @@ class ConflictResolutionService {
                 return await this.useBacktrackStrategy(shuttleId, conflict, floorId);
             }
 
-            const mqttService = require('../../services/mqttService');
+            const mqttService = require('../../services/mqttClientService');
             const commandTopic = `shuttle/command/${shuttleId}`;
             const commandPayload = {
                 action: 'MOVE_TO_PARKING',

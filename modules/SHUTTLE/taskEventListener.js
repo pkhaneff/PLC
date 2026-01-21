@@ -1,5 +1,5 @@
 const mqtt = require('mqtt');
-const mqttService = require('../../services/mqttService');
+const mqttClientService = require('../../services/mqttClientService');
 const { logger } = require('../../logger/logger');
 const shuttleTaskQueueService = require('./shuttleTaskQueueService');
 const cellService = require('../SHUTTLE/cellService');
@@ -19,14 +19,14 @@ const controller = require('../../controllers/shuttle.controller');
 const MissionCoordinatorService = require('./MissionCoordinatorService');
 const lifterService = require('../Lifter/lifterService');
 
-const MQTT_BROKER_URL = process.env.MQTT_URL || 'mqtt://localhost:1883';
+const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || 'mqtt://10.14.80.78:1883';
+const MQTT_USERNAME = process.env.MQTT_USERNAME || 'admin';
+const MQTT_PASSWORD = process.env.MQTT_PASSWORD || 'thaco@123';
 const SHUTTLE_IDLE_STATUS = 8; // Define constant for IDLE status
 
 class TaskEventListener {
   constructor() {
-    this.client = mqtt.connect(MQTT_BROKER_URL, {
-      clientId: `task_event_listener_${Date.now()}`
-    });
+    this.client = null;
     this.EVENTS_TOPIC = 'shuttle/events';
     this.dispatcher = null; // To hold the dispatcher instance
   }
@@ -40,23 +40,28 @@ class TaskEventListener {
   }
 
   initialize() {
-    if (!this.client) {
-      logger.error('[TaskEventListener] MQTT client not available.');
-      return;
-    }
+    // Create MQTT connection when initialize is called
+    logger.info('[TaskEventListener] Initializing MQTT connection...');
+    this.client = mqtt.connect(MQTT_BROKER_URL, {
+      clientId: `task_event_listener_${Date.now()}`,
+      username: MQTT_USERNAME,
+      password: MQTT_PASSWORD
+    });
 
     // Ensure we only subscribe and set up message handling AFTER a successful connection.
     this.client.on('connect', () => {
-
+      logger.info('[TaskEventListener] Connected to MQTT broker');
       this.client.subscribe(this.EVENTS_TOPIC, (err) => {
         if (err) {
           logger.error(`[TaskEventListener] Failed to subscribe to topic: ${this.EVENTS_TOPIC}`, err);
         } else {
+          logger.info(`[TaskEventListener] Subscribed to ${this.EVENTS_TOPIC}`);
         }
       });
     });
 
     this.client.on('message', (topic, message) => {
+      logger.info(`[TaskEventListener] Received message on topic: ${topic}`);
       if (topic === this.EVENTS_TOPIC) {
         this.handleEvent(message);
       }
@@ -85,12 +90,16 @@ class TaskEventListener {
         }
       }
 
+      logger.info(`[TaskEventListener] Parsed event: ${event}, shuttleId: ${shuttleId}, taskId: ${taskId}`);
+
       // Only warn for missing critical fields on events that require them for core logic
       if (!event) {
+        logger.warn('[TaskEventListener] Event name is missing. Ignoring.');
         return;
       }
       // For PICKUP_COMPLETE and TASK_COMPLETE, taskId is crucial
       if ((event === 'PICKUP_COMPLETE' || event === 'TASK_COMPLETE') && !taskId) {
+        logger.warn(`[TaskEventListener] Event ${event} requires taskId but it was not found. Ignoring. Payload: ${message.toString()}`);
         return;
       }
 
@@ -340,11 +349,11 @@ class TaskEventListener {
       await redisClient.hSet(taskKey, 'isCarrying', 'true');
 
       // 3. Send mission
-      const missionTopic = `${MQTT_TOPICS.SEND_MISSION}/${shuttleId}`;
+      const missionTopic = `${MQTT_TOPICS.HANDLE}/${shuttleId}`;
       if (this.dispatcher && this.dispatcher.publishMissionWithRetry) {
         await this.dispatcher.publishMissionWithRetry(missionTopic, missionPayload, shuttleId);
       } else {
-        mqttService.publishToTopic(missionTopic, missionPayload);
+        mqttClientService.publishToTopic(missionTopic, missionPayload);
       }
 
     } catch (error) {
@@ -396,11 +405,11 @@ class TaskEventListener {
       );
 
       // 3. Gửi mission chặng cuối
-      const missionTopic = `${MQTT_TOPICS.SEND_MISSION}/${shuttleId}`;
+      const missionTopic = `${MQTT_TOPICS.HANDLE}/${shuttleId}`;
       if (this.dispatcher && this.dispatcher.publishMissionWithRetry) {
         await this.dispatcher.publishMissionWithRetry(missionTopic, missionPayload, shuttleId);
       } else {
-        mqttService.publishToTopic(missionTopic, missionPayload);
+        mqttClientService.publishToTopic(missionTopic, missionPayload);
       }
 
     } catch (error) {
@@ -514,10 +523,21 @@ class TaskEventListener {
       targetQr: ''
     });
 
-    // 7. Proactively trigger the next dispatch cycle after a short delay
-    if (this.dispatcher) {
-      setTimeout(() => this.dispatcher.dispatchNextTask(), 1000);
-    }
+    // 7. Tự động xử lý inbound_pallet_queue sau khi shuttle IDLE
+    // Logic: Ưu tiên autoProcessInboundQueue cho shuttle vừa complete (nếu trong executing mode)
+    // Nếu queue rỗng hoặc shuttle không trong executing mode, fallback về dispatchNextTask
+    const controller = require('../../controllers/shuttle.controller');
+    setTimeout(async () => {
+      const result = await controller.autoProcessInboundQueue(shuttleId);
+      if (!result.success) {
+        logger.debug(`[TaskEventListener] autoProcessInboundQueue failed (${result.reason}), falling back to dispatchNextTask`);
+        if (this.dispatcher) {
+          this.dispatcher.dispatchNextTask();
+        }
+      } else {
+        logger.info(`[TaskEventListener] Shuttle ${shuttleId} automatically picked up next task from queue`);
+      }
+    }, 1000);
 
     await PathCacheService.deletePath(shuttleId);
   }

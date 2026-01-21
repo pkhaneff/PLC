@@ -3,11 +3,14 @@ const cellService = require('./modules/SHUTTLE/cellService');
 const { SHUTTLE_STATUS, TASK_ACTIONS, MQTT_TOPICS, MISSION_CONFIG } = require('./config/shuttle.config');
 
 // --- Config ---
-const MQTT_BROKER_URL = 'mqtt://localhost:1883';
+const MQTT_BROKER_URL = 'mqtt://10.14.80.78:1883';
+const MQTT_USERNAME = 'admin';
+const MQTT_PASSWORD = 'thaco@123';
 const LOOP_INTERVAL = 500;
-const NODE_TRAVEL_TIME_MS = 500;
+const NODE_TRAVEL_TIME_MS = 1000;
 const COMMAND_TOPIC = 'shuttle/command/+';
-const SEND_MISSION_TOPIC = 'shuttle/sendMission/+';
+const HANDLE_TOPIC = 'shuttle/handle/+';
+const RUN_TOPIC = 'shuttle/run/+';
 const INFO_TOPIC_PREFIX = 'shuttle/information/';
 const EVENTS_TOPIC = 'shuttle/events';
 
@@ -23,19 +26,34 @@ const COMMAND_COMPLETE = { IN_PROGRESS: 0, DONE: 1 };
 // --- MQTT Client ---
 const client = mqtt.connect(MQTT_BROKER_URL, {
     clientId: 'multi-shuttle-simulator-agents',
+    username: MQTT_USERNAME,
+    password: MQTT_PASSWORD,
 });
 
 // --- Simulation State ---
 let shuttleStates = SHUTTLE_CONFIGS.map(config => ({
     no: config.code,
     ip: config.ip,
+    shuttleMode: 0,                // Default shuttle mode
     currentStep: 0,
+    chargeCycle: 5,                // Default charge cycle
+    voltage: 53.2,                 // Default voltage
+    current: -0.5,                 // Default current
+    batteryCapacity: 49.8,         // Default battery capacity
+    batteryPercentage: 99.6,       // Default battery percentage
+    chargeDischargeStatus: 0,      // Default charge/discharge status
     shuttleStatus: SHUTTLE_STATUS.IDLE,
+    power: 0,                      // Default power
+    errorCode: "00",               // Default no error
+    speed: 0,                      // Default speed
     commandComplete: COMMAND_COMPLETE.DONE,
     qrCode: config.startQrCode,
     packageStatus: 0,              // 0 = no package, 1 = has package, 2 = misaligned
     palletLiftingStatus: 0,        // 0 = down, 1 = up
     missionCompleted: 0,           // Total missions completed counter
+    temperature: 39,               // Default temperature
+    pressure: 0.3053,              // Default pressure
+    runPermission: 0,              // 0 = not allowed to run, 1 = allowed to run
     path: [],                      // Internal: Array of {qrCode, direction, action}
     currentPathIndex: 0,           // Internal: Current index in path
     lastMoveTimestamp: 0,          // Internal: Last movement time
@@ -71,6 +89,11 @@ function publishEvent(eventName, shuttleNo, data = {}) {
  * @param {object} state The shuttle state object.
  */
 async function processMovement(state) {
+    // Check if shuttle has permission to run
+    if (state.runPermission !== 1) {
+        return; // Shuttle not allowed to run
+    }
+
     // Process movement only for shuttles that are running or waiting and have a path.
     if (![SHUTTLE_STATUS.NORMAL_SPEED, SHUTTLE_STATUS.WAITING].includes(state.shuttleStatus) || state.path.length === 0) {
         return;
@@ -107,7 +130,11 @@ async function processMovement(state) {
             }
 
             // Publish event AFTER updating state
-            publishEvent(arrivalEvent, state.no, { meta: state.taskInfo });
+            // CRITICAL: Extract taskId to top level so TaskEventListener can process it
+            publishEvent(arrivalEvent, state.no, {
+                taskId: state.taskInfo?.taskId,
+                meta: state.taskInfo
+            });
         } else {
             console.warn(`[Simulator] Shuttle ${state.no} completed a path but had no onArrival event stored.`);
         }
@@ -173,10 +200,10 @@ async function processMovement(state) {
 client.on('connect', () => {
     console.log(`[Simulator] Connected. Initializing ${SHUTTLE_CONFIGS.length} agents. Travel time is ${NODE_TRAVEL_TIME_MS / 1000}s/node.`);
 
-    // Subscribe to both command and sendMission topics
-    client.subscribe([COMMAND_TOPIC, SEND_MISSION_TOPIC], (err) => {
+    // Subscribe to command, handle, and run topics
+    client.subscribe([COMMAND_TOPIC, HANDLE_TOPIC, RUN_TOPIC], (err) => {
         if (!err) {
-            console.log(`[Simulator] Subscribed to topics: ${COMMAND_TOPIC}, ${SEND_MISSION_TOPIC}`);
+            console.log(`[Simulator] Subscribed to topics: ${COMMAND_TOPIC}, ${HANDLE_TOPIC}, ${RUN_TOPIC}`);
         }
     });
 
@@ -192,24 +219,34 @@ client.on('connect', () => {
         shuttleStates.forEach(async (state) => {
             await processMovement(state);
 
-            // Publish shuttle information (only send fields needed by server)
+            // Publish shuttle information (send all fields)
             const topic = `${INFO_TOPIC_PREFIX}${state.no}`;
             const payload = JSON.stringify({
                 no: state.no,
                 ip: state.ip,
+                shuttleMode: state.shuttleMode,
                 currentStep: state.currentStep,
+                chargeCycle: state.chargeCycle,
+                voltage: state.voltage,
+                current: state.current,
+                batteryCapacity: state.batteryCapacity,
+                batteryPercentage: state.batteryPercentage,
+                chargeDischargeStatus: state.chargeDischargeStatus,
                 shuttleStatus: state.shuttleStatus,
+                power: state.power,
+                errorCode: state.errorCode,
+                speed: state.speed,
                 commandComplete: state.commandComplete,
                 qrCode: state.qrCode,
                 packageStatus: state.packageStatus,
                 palletLiftingStatus: state.palletLiftingStatus,
                 missionCompleted: state.missionCompleted,
-                taskId: state.taskInfo ? state.taskInfo.taskId : '',
-                targetQr: state.taskInfo ? state.taskInfo.endNodeQr : ''
+                temperature: state.temperature,
+                pressure: state.pressure
             });
             client.publish(topic, payload);
         });
-    }, MISSION_CONFIG.PUBLISH_INTERVAL); // Use 300ms from config
+    }, MISSION_CONFIG.PUBLISH_INTERVAL);
 });
 
 /**
@@ -238,6 +275,28 @@ client.on('message', async (topic, message) => {
         return;
     }
 
+    // Handle shuttle/run/{code} topic
+    if (topicType === 'run') {
+        try {
+            const messageStr = message.toString();
+            // Parse JSON nếu message là JSON string, nếu không thì dùng trực tiếp
+            let runCommand;
+            try {
+                runCommand = JSON.parse(messageStr); // Try parse JSON: "1" -> 1
+            } catch {
+                runCommand = parseInt(messageStr, 10); // Fallback: parse as integer
+            }
+
+            shuttle.runPermission = parseInt(runCommand, 10);
+            console.log(`[Simulator] Shuttle ${shuttleCode} run permission set to: ${shuttle.runPermission} (${shuttle.runPermission === 1 ? 'ALLOWED' : 'NOT ALLOWED'})`);
+            publishEvent('shuttle-run-permission-changed', shuttle.no, { runPermission: shuttle.runPermission });
+            return;
+        } catch (e) {
+            console.error(`[Simulator] Failed to parse run command for shuttle ${shuttleCode}:`, e);
+            return;
+        }
+    }
+
     // Do not accept new paths if already running
     if (shuttle.shuttleStatus !== SHUTTLE_STATUS.IDLE) {
         return;
@@ -246,8 +305,8 @@ client.on('message', async (topic, message) => {
     try {
         const command = JSON.parse(message.toString());
 
-        if (topicType === 'sendMission' && command.totalStep) {
-            console.log(`[Simulator] Shuttle ${shuttleCode} received sendMission with ${command.totalStep} steps`);
+        if (topicType === 'handle' && command.totalStep) {
+            console.log(`[Simulator] Shuttle ${shuttleCode} received handle command with ${command.totalStep} steps`);
 
             shuttle.commandComplete = COMMAND_COMPLETE.IN_PROGRESS;
             console.log(`[Simulator] Shuttle ${shuttleCode} acknowledged mission (commandComplete=0)`);

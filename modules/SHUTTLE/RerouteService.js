@@ -1,6 +1,6 @@
 const { logger } = require('../../logger/logger');
 const { findShortestPath } = require('./pathfinding');
-const { publishToTopic } = require('../../services/mqttService');
+const { publishToTopic } = require('../../services/mqttClientService');
 const redisClient = require('../../redis/init.redis');
 const PathCacheService = require('./PathCacheService');
 

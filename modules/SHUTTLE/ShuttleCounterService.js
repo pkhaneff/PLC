@@ -14,28 +14,23 @@ class ShuttleCounterService {
   }
 
   /**
-   * Đếm số shuttle đang active (status không phải IDLE)
-   * @returns {Promise<number>} Số lượng shuttle active
+   * Đếm số shuttle đang trong executing mode (được kích hoạt qua /execute-storage)
+   * Chỉ đếm shuttles trong executing mode, không phải tất cả active shuttles
+   * @returns {Promise<number>} Số lượng shuttle trong executing mode
    */
   async getActiveShuttleCount() {
     try {
-      const allShuttles = await getAllShuttleStates();
-
-      // Đếm shuttle có status khác IDLE (8)
-      const activeShuttles = allShuttles.filter(
-        shuttle => shuttle.shuttleStatus !== SHUTTLE_STATUS.IDLE
-      );
-
-      const count = activeShuttles.length;
+      const ExecutingModeService = require('./ExecutingModeService');
+      const count = await ExecutingModeService.getExecutingCount();
 
       // Cache vào Redis
       await redisClient.set(this.COUNTER_KEY, count.toString(), { EX: this.COUNTER_TTL });
 
-      logger.debug(`[ShuttleCounterService] Active shuttle count: ${count}`);
+      logger.debug(`[ShuttleCounterService] Executing shuttle count: ${count}`);
       return count;
 
     } catch (error) {
-      logger.error('[ShuttleCounterService] Error counting active shuttles:', error);
+      logger.error('[ShuttleCounterService] Error counting executing shuttles:', error);
       return 0;
     }
   }

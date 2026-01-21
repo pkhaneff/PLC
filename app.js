@@ -11,7 +11,7 @@ const healthController = require('./controllers/health.controller');
 const { logger } = require('./logger/logger.js')
 const shuttleDispatcherService = require('./modules/SHUTTLE/shuttleDispatcherService');
 const taskEventListener = require('./modules/SHUTTLE/taskEventListener');
-const { initializeMqttBroker } = require('./services/mqttService');
+const { initializeMqttClient } = require('./services/mqttClientService');
 const PathCacheService = require('./modules/SHUTTLE/PathCacheService');
 
 const app = express();
@@ -41,7 +41,7 @@ async function startServer() {
 
         const dispatcher = new shuttleDispatcherService(io);
 
-        initializeMqttBroker(io);
+        initializeMqttClient(io);
         taskEventListener.initialize();
         taskEventListener.setDispatcher(dispatcher);
 
