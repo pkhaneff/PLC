@@ -70,6 +70,54 @@ class TaskEventListener {
     this.client.on('error', (err) => {
       logger.error('[TaskEventListener] MQTT client connection error:', err);
     });
+
+    // --- Redis Subscriber for Lifter Events ---
+    this.subscriber = redisClient.duplicate();
+    this.subscriber.connect().then(() => {
+      logger.info('[TaskEventListener] Redis Subscriber connected');
+      this.subscriber.subscribe('lifter:events', (message) => {
+        try {
+          const payload = JSON.parse(message);
+          this.handleLifterEvent(payload);
+        } catch (e) {
+          logger.error('[TaskEventListener] Error parsing lifter event:', e);
+        }
+      });
+    }).catch(err => {
+      logger.error('[TaskEventListener] Redis Subscriber connection failed:', err);
+    });
+  }
+
+  async handleLifterEvent(payload) {
+    const { event, floorId, shuttleId } = payload;
+    logger.info(`[TaskEventListener] Received Redis event: ${event} for F${floorId}`);
+
+    if (event === 'LIFTER_ARRIVED') {
+      const waitingKey = `waiting:lifter:${floorId}`;
+      const waitingShuttles = await redisClient.sMembers(waitingKey);
+
+      if (waitingShuttles && waitingShuttles.length > 0) {
+        logger.info(`[TaskEventListener] Found ${waitingShuttles.length} shuttles waiting for Lifter at F${floorId}. Resuming...`);
+
+        for (const sId of waitingShuttles) {
+          // Resume shuttle
+          if (this.dispatcher) {
+            // We need to re-dispatch the CURRENT task of the shuttle.
+            const taskInfo = await shuttleTaskQueueService.getShuttleTask(sId);
+            if (taskInfo) {
+              logger.info(`[TaskEventListener] Resuming task ${taskInfo.taskId} for shuttle ${sId}`);
+              // Dispatcher will recalculate path. Since Lifter is here, it will generate path INTO lifter.
+              await this.dispatcher.dispatchTaskToShuttle(taskInfo, sId);
+              // Remove from waiting set
+              await redisClient.sRem(waitingKey, sId);
+            } else {
+              logger.warn(`[TaskEventListener] Shuttle ${sId} waiting but no active task found.`);
+              await redisClient.sRem(waitingKey, sId);
+            }
+          }
+        }
+      }
+    }
   }
 
   async handleEvent(message) {
@@ -81,7 +129,7 @@ class TaskEventListener {
       const eventPayload = JSON.parse(message.toString());
       let { event, taskId, shuttleId } = eventPayload;
 
-      // Try to extract taskId from taskInfo or meta if not at top level
+      // Try to extract taskId into variable IF NOT PRESENT
       if (!taskId) {
         if (eventPayload.taskInfo && eventPayload.taskInfo.taskId) {
           taskId = eventPayload.taskInfo.taskId;
@@ -92,18 +140,43 @@ class TaskEventListener {
 
       logger.info(`[TaskEventListener] Parsed event: ${event}, shuttleId: ${shuttleId}, taskId: ${taskId}`);
 
-      // Only warn for missing critical fields on events that require them for core logic
-      if (!event) {
-        logger.warn('[TaskEventListener] Event name is missing. Ignoring.');
-        return;
-      }
-      // For PICKUP_COMPLETE and TASK_COMPLETE, taskId is crucial
-      if ((event === 'PICKUP_COMPLETE' || event === 'TASK_COMPLETE') && !taskId) {
-        logger.warn(`[TaskEventListener] Event ${event} requires taskId but it was not found. Ignoring. Payload: ${message.toString()}`);
-        return;
-      }
+      if (!event) return;
 
       switch (event) {
+        case 'WAITING_FOR_LIFTER':
+          logger.info(`[TaskEventListener] Shuttle ${shuttleId} is WAITING for Lifter.`);
+          if (eventPayload.meta && eventPayload.meta.waitingFloor) {
+            const floor = eventPayload.meta.waitingFloor;
+            await redisClient.sAdd(`waiting:lifter:${floor}`, shuttleId);
+            // Also update task status if needed
+            if (taskId) {
+              await shuttleTaskQueueService.updateTaskStatus(taskId, 'waiting_for_lifter');
+            }
+
+            // CRITICAL FIX: Check if lifter is ALREADY there
+            // Race condition: Lifter might have arrived BEFORE shuttle sent WAITING_FOR_LIFTER
+            const LifterCoordinationService = require('../Lifter/LifterCoordinationService');
+            const lifterStatus = await LifterCoordinationService.getLifterStatus();
+
+            const isLifterAtFloor = lifterStatus && String(lifterStatus.currentFloor) === String(floor);
+            const isLifterBusy = lifterStatus && lifterStatus.status === 'MOVING';
+
+            if (isLifterAtFloor && !isLifterBusy) {
+              logger.info(`[TaskEventListener] Lifter already at F${floor} and idle. Resuming shuttle ${shuttleId} immediately.`);
+
+              // Resume shuttle logic (duplicated from handleLifterEvent for now to be safe)
+              if (this.dispatcher) {
+                const taskInfo = await shuttleTaskQueueService.getShuttleTask(shuttleId);
+                if (taskInfo) {
+                  logger.info(`[TaskEventListener] Immediate Resume: Resuming task ${taskInfo.taskId} for shuttle ${shuttleId}`);
+                  await this.dispatcher.dispatchTaskToShuttle(taskInfo, shuttleId);
+                  await redisClient.sRem(`waiting:lifter:${floor}`, shuttleId);
+                }
+              }
+            }
+          }
+          break;
+
         case 'shuttle-task-started':
           if (taskId) {
             // Update task status to in_progress as soon as shuttle starts moving
