@@ -128,7 +128,7 @@ class ConflictResolutionService {
             }
 
             const mqttService = require('../../services/mqttClientService');
-            const commandTopic = `shuttle/command/${shuttleId}`;
+            const commandTopic = `shuttle/handle/${shuttleId}`;
             const commandPayload = {
                 action: 'MOVE_TO_PARKING',
                 path: pathToParking,

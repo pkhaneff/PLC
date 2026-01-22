@@ -8,10 +8,11 @@ const MQTT_USERNAME = 'admin';
 const MQTT_PASSWORD = 'thaco@123';
 const LOOP_INTERVAL = 500;
 const NODE_TRAVEL_TIME_MS = 1000;
-const COMMAND_TOPIC = 'shuttle/command/+';
 const HANDLE_TOPIC = 'shuttle/handle/+';
 const RUN_TOPIC = 'shuttle/run/+';
 const INFO_TOPIC_PREFIX = 'shuttle/information/';
+const REPORT_TOPIC_PREFIX = 'shuttle/report/';
+const COMPLETE_MISSION_TOPIC_PREFIX = 'shuttle/completeMission/';
 const EVENTS_TOPIC = 'shuttle/events';
 
 const SHUTTLE_CONFIGS = [
@@ -139,6 +140,20 @@ async function processMovement(state) {
             console.warn(`[Simulator] Shuttle ${state.no} completed a path but had no onArrival event stored.`);
         }
 
+        // Publish to shuttle/completeMission/{code}
+        const completeMissionTopic = `${COMPLETE_MISSION_TOPIC_PREFIX}${state.no}`;
+        const completeMissionPayload = JSON.stringify({
+            status: 1,
+            qrCode: state.qrCode
+        });
+        client.publish(completeMissionTopic, completeMissionPayload, (err) => {
+            if (err) {
+                console.error(`[Simulator] Failed to publish completeMission for ${state.no}:`, err);
+            } else {
+                console.log(`[Simulator] Published completeMission for ${state.no} at ${state.qrCode}`);
+            }
+        });
+
         // Reset state and move to idle
         state.shuttleStatus = SHUTTLE_STATUS.IDLE;
         state.commandComplete = COMMAND_COMPLETE.DONE;
@@ -167,7 +182,8 @@ async function processMovement(state) {
             publishEvent('shuttle-waiting', state.no, {
                 waitingAt: state.qrCode,
                 targetNode: nextNode,
-                blockedBy: blockingShuttle.no
+                blockedBy: blockingShuttle.no,
+                taskId: state.taskInfo?.taskId
             });
             console.log(`[Simulator] Published event shuttle-waiting for ${state.no}`);
         }
@@ -178,7 +194,11 @@ async function processMovement(state) {
     if (state.shuttleStatus === SHUTTLE_STATUS.WAITING) {
         const nextNodeName = await cellService.getDisplayNameWithoutFloor(nextNode);
         console.log(`[Simulator] Shuttle ${state.no} resumes movement. Node ${nextNodeName} is now free.`);
-        publishEvent('shuttle-resumed', state.no, { resumedFrom: state.qrCode, targetNode: nextNode });
+        publishEvent('shuttle-resumed', state.no, {
+            resumedFrom: state.qrCode,
+            targetNode: nextNode,
+            taskId: state.taskInfo?.taskId
+        });
     }
     state.shuttleStatus = SHUTTLE_STATUS.NORMAL_SPEED;
 
@@ -192,7 +212,11 @@ async function processMovement(state) {
     const prevNodeName = await cellService.getDisplayNameWithoutFloor(previousNode);
     const nextNodeName = await cellService.getDisplayNameWithoutFloor(nextNode);
     console.log(`[Simulator] Shuttle ${state.no} moved from ${prevNodeName} to ${nextNodeName}`);
-    publishEvent('shuttle-moved', state.no, { currentNode: state.qrCode, previousNode: previousNode });
+    publishEvent('shuttle-moved', state.no, {
+        currentNode: state.qrCode,
+        previousNode: previousNode,
+        taskId: state.taskInfo?.taskId
+    });
 }
 
 // --- Main Logic ---
@@ -200,10 +224,10 @@ async function processMovement(state) {
 client.on('connect', () => {
     console.log(`[Simulator] Connected. Initializing ${SHUTTLE_CONFIGS.length} agents. Travel time is ${NODE_TRAVEL_TIME_MS / 1000}s/node.`);
 
-    // Subscribe to command, handle, and run topics
-    client.subscribe([COMMAND_TOPIC, HANDLE_TOPIC, RUN_TOPIC], (err) => {
+    // Subscribe to handle and run topics
+    client.subscribe([HANDLE_TOPIC, RUN_TOPIC], (err) => {
         if (!err) {
-            console.log(`[Simulator] Subscribed to topics: ${COMMAND_TOPIC}, ${HANDLE_TOPIC}, ${RUN_TOPIC}`);
+            console.log(`[Simulator] Subscribed to topics: ${HANDLE_TOPIC}, ${RUN_TOPIC}`);
         }
     });
 
@@ -308,6 +332,16 @@ client.on('message', async (topic, message) => {
         if (topicType === 'handle' && command.totalStep) {
             console.log(`[Simulator] Shuttle ${shuttleCode} received handle command with ${command.totalStep} steps`);
 
+            // Publish to shuttle/report/{code} to acknowledge receipt
+            const reportTopic = `${REPORT_TOPIC_PREFIX}${shuttleCode}`;
+            client.publish(reportTopic, message.toString(), (err) => {
+                if (err) {
+                    console.error(`[Simulator] Failed to publish report for ${shuttleCode}:`, err);
+                } else {
+                    console.log(`[Simulator] Published report acknowledgment for ${shuttleCode}`);
+                }
+            });
+
             shuttle.commandComplete = COMMAND_COMPLETE.IN_PROGRESS;
             console.log(`[Simulator] Shuttle ${shuttleCode} acknowledged mission (commandComplete=0)`);
 
@@ -340,7 +374,12 @@ client.on('message', async (topic, message) => {
                 }
 
                 // Set shuttle state
-                publishEvent('shuttle-task-started', shuttle.no, { pathLength: newPath.length, startNode: newPath[0].qrCode });
+                publishEvent('shuttle-task-started', shuttle.no, {
+                    pathLength: newPath.length,
+                    startNode: newPath[0].qrCode,
+                    taskId: taskInfo.taskId,
+                    meta: taskInfo
+                });
 
                 shuttle.path = newPath;
                 shuttle.onArrival = onArrival;
@@ -348,40 +387,6 @@ client.on('message', async (topic, message) => {
                 shuttle.currentPathIndex = 0;
                 shuttle.currentStep = 0;
                 shuttle.qrCode = newPath[0].qrCode; // Start at first node
-                shuttle.shuttleStatus = SHUTTLE_STATUS.NORMAL_SPEED;
-                // commandComplete already set to IN_PROGRESS above for immediate ACK
-                shuttle.lastMoveTimestamp = Date.now();
-            }
-
-            // Handle legacy format: shuttle/command/{code}
-        } else if (topicType === 'command' && command.path && command.onArrival) {
-            console.log(`[Simulator] Shuttle ${shuttleCode} received legacy command format`);
-
-            // CRITICAL: Acknowledge immediately
-            shuttle.commandComplete = COMMAND_COMPLETE.IN_PROGRESS;
-            console.log(`[Simulator] Shuttle ${shuttleCode} acknowledged command (commandComplete=0)`);
-
-            const pathObject = command.path;
-
-            // Convert legacy path to new format
-            const newPath = [];
-            for (let i = 1; i <= pathObject.totalStep; i++) {
-                const stepString = pathObject[`step${i}`];
-                if (stepString) {
-                    const stepData = parseStepString(stepString);
-                    newPath.push(stepData);
-                }
-            }
-
-            if (newPath.length > 0) {
-                publishEvent('shuttle-task-started', shuttle.no, { pathLength: newPath.length, startNode: newPath[0].qrCode });
-
-                shuttle.path = newPath;
-                shuttle.onArrival = command.onArrival;
-                shuttle.taskInfo = command.taskInfo;
-                shuttle.currentPathIndex = 0;
-                shuttle.currentStep = 0;
-                shuttle.qrCode = newPath[0].qrCode;
                 shuttle.shuttleStatus = SHUTTLE_STATUS.NORMAL_SPEED;
                 // commandComplete already set to IN_PROGRESS above for immediate ACK
                 shuttle.lastMoveTimestamp = Date.now();

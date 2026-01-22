@@ -34,6 +34,6 @@ router.delete('/clear-queues', lifterController.clearQueues);
 router.get('/info/:lifterId', lifterController.getLifterInfo);
 
 // Mô phỏng điều khiển và giám sát lifter
-router.post('/simulate-control', lifterController.simulateControl);
+// router.post('/simulate-control', lifterController.simulateControl);
 
 module.exports = router;

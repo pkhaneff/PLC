@@ -26,7 +26,6 @@ const SHUTTLE_STATUS = {
 const MQTT_TOPICS = {
     INFORMATION: 'shuttle/information',      // shuttle/information/{code}
     HANDLE: 'shuttle/handle',                // shuttle/handle/{code}
-    COMMAND: 'shuttle/command',              // shuttle/command/{code}
     EVENTS: 'shuttle/events'                 // shuttle/events
 };
 

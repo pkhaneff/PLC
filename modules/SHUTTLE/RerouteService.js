@@ -174,7 +174,7 @@ class RerouteService {
             logger.info(`[Reroute] Applying backup path to shuttle ${shuttleId}`);
 
             // Send reroute command via MQTT
-            const commandTopic = `shuttle/command/${shuttleId}`;
+            const commandTopic = `shuttle/handle/${shuttleId}`;
             const commandPayload = {
                 action: 'REROUTE',
                 path: backupPath,

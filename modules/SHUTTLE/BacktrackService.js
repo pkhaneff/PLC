@@ -151,7 +151,7 @@ class BacktrackService {
             }
 
             // Send backtrack command via MQTT
-            const commandTopic = `shuttle/command/${shuttleId}`;
+            const commandTopic = `shuttle/handle/${shuttleId}`;
             const commandPayload = {
                 action: 'BACKTRACK',
                 path: reversePath,

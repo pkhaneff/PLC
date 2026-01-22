@@ -321,20 +321,20 @@ class LifterController {
     }
   }
 
-  async simulateControl(req, res) {
-    try {
-      const { targetFloor } = req.body;
-      const result = await lifterService.moveLifterToFloor(targetFloor);
+  // async simulateControl(req, res) {
+  //   try {
+  //     const { targetFloor } = req.body;
+  //     const result = await lifterService.moveLifterToFloor(targetFloor);
 
-      return res.status(200).json(result);
-    } catch (error) {
-      console.error('Error in simulateControl:', error);
-      return res.status(500).json({
-        success: false,
-        message: error.message || 'Lỗi hệ thống'
-      });
-    }
-  }
+  //     return res.status(200).json(result);
+  //   } catch (error) {
+  //     console.error('Error in simulateControl:', error);
+  //     return res.status(500).json({
+  //       success: false,
+  //       message: error.message || 'Lỗi hệ thống'
+  //     });
+  //   }
+  // }
 }
 
 module.exports = new LifterController();
