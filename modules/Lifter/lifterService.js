@@ -205,17 +205,12 @@ class LifterService {
       }
 
       // Đăng ký task vào hàng đợi Redis
-      const queueInfo = await lifterQueueService.registerTask(
-        fromFloor,
-        toFloor,
-        lifterId,
-        {
-          ...taskData,
-          lifterName: lifter.name,
-          fromCell: JSON.stringify(cells[fromFloor]),
-          toCell: JSON.stringify(cells[toFloor])
-        }
-      );
+      const queueInfo = await lifterQueueService.registerTask(fromFloor, toFloor, lifterId, {
+        ...taskData,
+        lifterName: lifter.name,
+        fromCell: JSON.stringify(cells[fromFloor]),
+        toCell: JSON.stringify(cells[toFloor]),
+      });
 
       return {
         success: true,
@@ -226,8 +221,8 @@ class LifterService {
           positionInGlobalQueue: queueInfo.position,
           globalQueueLength: queueInfo.globalQueueLength,
           floorQueueLength: queueInfo.floorQueueLength,
-          estimatedWaitTime: this.estimateWaitTime(queueInfo.position)
-        }
+          estimatedWaitTime: this.estimateWaitTime(queueInfo.position),
+        },
       };
     } catch (error) {
       console.error('Error requesting lifter for task:', error);
@@ -365,8 +360,8 @@ class LifterService {
       // 1. Đọc vị trí hiện tại
       const posF1 = plcManager.getValue(plcId, 'LIFTER_1_POS_F1');
       const posF2 = plcManager.getValue(plcId, 'LIFTER_1_POS_F2');
-      const currentFloor = posF1 ? 1 : (posF2 ? 2 : 0);
-      console.log("currentFloor", currentFloor)
+      const currentFloor = posF1 ? 1 : posF2 ? 2 : 0;
+      console.log('currentFloor', currentFloor);
 
       if (currentFloor === targetFloor) {
         return { success: true, message: `Lifter đã ở tầng ${targetFloor}`, currentFloor };
@@ -385,25 +380,26 @@ class LifterService {
       const maxMoveTime = 2000;
       const checkInterval = 500;
 
-      const monitorMovement = () => new Promise((resolve, reject) => {
-        const timer = setInterval(async () => {
-          moveTime += checkInterval;
+      const monitorMovement = () =>
+        new Promise((resolve, reject) => {
+          const timer = setInterval(async () => {
+            moveTime += checkInterval;
 
-          // Kiểm tra lỗi
-          const hasError = plcManager.getValue(plcId, 'LIFTER_1_ERROR');
-          if (hasError) {
-            clearInterval(timer);
-            return reject(new Error('Lifter gặp lỗi trong quá trình di chuyển!'));
-          }
+            // Kiểm tra lỗi
+            const hasError = plcManager.getValue(plcId, 'LIFTER_1_ERROR');
+            if (hasError) {
+              clearInterval(timer);
+              return reject(new Error('Lifter gặp lỗi trong quá trình di chuyển!'));
+            }
 
-          logger.debug(`[LifterService] Đang di chuyển... (${moveTime}ms)`);
+            logger.debug(`[LifterService] Đang di chuyển... (${moveTime}ms)`);
 
-          if (moveTime >= maxMoveTime) {
-            clearInterval(timer);
-            resolve();
-          }
-        }, checkInterval);
-      });
+            if (moveTime >= maxMoveTime) {
+              clearInterval(timer);
+              resolve();
+            }
+          }, checkInterval);
+        });
 
       await monitorMovement();
 
@@ -421,7 +417,7 @@ class LifterService {
         success: true,
         message: `Đã di chuyển lifter tới tầng ${targetFloor} thành công`,
         previousFloor: currentFloor,
-        currentFloor: targetFloor
+        currentFloor: targetFloor,
       };
     } catch (error) {
       logger.error(`[LifterService] Error in moveLifterToFloor: ${error.message}`);

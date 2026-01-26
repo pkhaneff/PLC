@@ -3,18 +3,6 @@ const lifterQueueService = require('../modules/Lifter/lifterQueueService');
 const { logger } = require('../logger/logger');
 
 class LifterController {
-  /**
-   * Đăng ký yêu cầu sử dụng lifter cho nhiệm vụ
-   * POST /api/v1/lifter/request-task
-   * Body: {
-   *   fromFloor: number,
-   *   toFloor: number,
-   *   lifterId: number,
-   *   shuttleId?: string,
-   *   orderId?: string,
-   *   ...otherData
-   * }
-   */
   async requestTask(req, res) {
     try {
       const { fromFloor, toFloor, lifterId, ...taskData } = req.body;
@@ -23,36 +11,27 @@ class LifterController {
       if (!fromFloor || !toFloor || !lifterId) {
         return res.status(400).json({
           success: false,
-          message: 'Missing required fields: fromFloor, toFloor, lifterId'
+          message: 'Missing required fields: fromFloor, toFloor, lifterId',
         });
       }
 
       // Đăng ký task vào hàng đợi
-      const result = await lifterService.requestLifterForTask(
-        fromFloor,
-        toFloor,
-        lifterId,
-        taskData
-      );
+      const result = await lifterService.requestLifterForTask(fromFloor, toFloor, lifterId, taskData);
 
       return res.status(200).json({
         success: true,
         message: 'Task registered successfully',
-        data: result
+        data: result,
       });
     } catch (error) {
       console.error('Error in requestTask:', error);
       return res.status(500).json({
         success: false,
-        message: error.message || 'Internal server error'
+        message: error.message || 'Internal server error',
       });
     }
   }
 
-  /**
-   * Lấy task tiếp theo cần xử lý
-   * GET /api/v1/lifter/next-task
-   */
   async getNextTask(req, res) {
     try {
       const nextTask = await lifterService.getNextTaskFromQueue();
@@ -61,20 +40,20 @@ class LifterController {
         return res.status(200).json({
           success: true,
           message: 'No tasks in queue',
-          data: null
+          data: null,
         });
       }
 
       return res.status(200).json({
         success: true,
         message: 'Next task retrieved successfully',
-        data: nextTask
+        data: nextTask,
       });
     } catch (error) {
       console.error('Error in getNextTask:', error);
       return res.status(500).json({
         success: false,
-        message: error.message || 'Internal server error'
+        message: error.message || 'Internal server error',
       });
     }
   }
@@ -90,7 +69,7 @@ class LifterController {
       if (!taskId) {
         return res.status(400).json({
           success: false,
-          message: 'Missing taskId parameter'
+          message: 'Missing taskId parameter',
         });
       }
 
@@ -99,13 +78,13 @@ class LifterController {
       return res.status(200).json({
         success: success,
         message: success ? 'Task marked as processing' : 'Failed to mark task',
-        data: { taskId }
+        data: { taskId },
       });
     } catch (error) {
       console.error('Error in startTask:', error);
       return res.status(500).json({
         success: false,
-        message: error.message || 'Internal server error'
+        message: error.message || 'Internal server error',
       });
     }
   }
@@ -121,7 +100,7 @@ class LifterController {
       if (!taskId) {
         return res.status(400).json({
           success: false,
-          message: 'Missing taskId parameter'
+          message: 'Missing taskId parameter',
         });
       }
 
@@ -130,13 +109,13 @@ class LifterController {
       return res.status(200).json({
         success: true,
         message: 'Task completed successfully',
-        data: result
+        data: result,
       });
     } catch (error) {
       console.error('Error in completeTask:', error);
       return res.status(500).json({
         success: false,
-        message: error.message || 'Internal server error'
+        message: error.message || 'Internal server error',
       });
     }
   }
@@ -152,13 +131,13 @@ class LifterController {
       return res.status(200).json({
         success: true,
         message: 'Queue statistics retrieved successfully',
-        data: stats
+        data: stats,
       });
     } catch (error) {
       console.error('Error in getQueueStats:', error);
       return res.status(500).json({
         success: false,
-        message: error.message || 'Internal server error'
+        message: error.message || 'Internal server error',
       });
     }
   }
@@ -174,7 +153,7 @@ class LifterController {
       if (!floorId) {
         return res.status(400).json({
           success: false,
-          message: 'Missing floorId parameter'
+          message: 'Missing floorId parameter',
         });
       }
 
@@ -186,14 +165,14 @@ class LifterController {
         data: {
           floorId: parseInt(floorId),
           queueLength: tasks.length,
-          tasks: tasks
-        }
+          tasks: tasks,
+        },
       });
     } catch (error) {
       console.error('Error in getFloorQueue:', error);
       return res.status(500).json({
         success: false,
-        message: error.message || 'Internal server error'
+        message: error.message || 'Internal server error',
       });
     }
   }
@@ -212,14 +191,14 @@ class LifterController {
         message: 'Global queue retrieved successfully',
         data: {
           queueLength: tasks.length,
-          tasks: tasks
-        }
+          tasks: tasks,
+        },
       });
     } catch (error) {
       console.error('Error in getGlobalQueue:', error);
       return res.status(500).json({
         success: false,
-        message: error.message || 'Internal server error'
+        message: error.message || 'Internal server error',
       });
     }
   }
@@ -235,7 +214,7 @@ class LifterController {
       if (!taskId) {
         return res.status(400).json({
           success: false,
-          message: 'Missing taskId parameter'
+          message: 'Missing taskId parameter',
         });
       }
 
@@ -244,20 +223,20 @@ class LifterController {
       if (!taskDetails) {
         return res.status(404).json({
           success: false,
-          message: 'Task not found'
+          message: 'Task not found',
         });
       }
 
       return res.status(200).json({
         success: true,
         message: 'Task details retrieved successfully',
-        data: taskDetails
+        data: taskDetails,
       });
     } catch (error) {
       console.error('Error in getTaskDetails:', error);
       return res.status(500).json({
         success: false,
-        message: error.message || 'Internal server error'
+        message: error.message || 'Internal server error',
       });
     }
   }
@@ -272,13 +251,13 @@ class LifterController {
 
       return res.status(200).json({
         success: success,
-        message: success ? 'All queues cleared successfully' : 'Failed to clear queues'
+        message: success ? 'All queues cleared successfully' : 'Failed to clear queues',
       });
     } catch (error) {
       console.error('Error in clearQueues:', error);
       return res.status(500).json({
         success: false,
-        message: error.message || 'Internal server error'
+        message: error.message || 'Internal server error',
       });
     }
   }
@@ -294,7 +273,7 @@ class LifterController {
       if (!lifterId) {
         return res.status(400).json({
           success: false,
-          message: 'Missing lifterId parameter'
+          message: 'Missing lifterId parameter',
         });
       }
 
@@ -303,20 +282,20 @@ class LifterController {
       if (!lifter) {
         return res.status(404).json({
           success: false,
-          message: 'Lifter not found'
+          message: 'Lifter not found',
         });
       }
 
       return res.status(200).json({
         success: true,
         message: 'Lifter info retrieved successfully',
-        data: lifter
+        data: lifter,
       });
     } catch (error) {
       console.error('Error in getLifterInfo:', error);
       return res.status(500).json({
         success: false,
-        message: error.message || 'Internal server error'
+        message: error.message || 'Internal server error',
       });
     }
   }

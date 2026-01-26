@@ -70,16 +70,13 @@ class LifterQueueService {
         lifterId,
         timestamp,
         status: 'pending',
-        ...taskData
+        ...taskData,
       };
 
       await redisClient.hSet(this.getTaskKey(taskId), taskDetails);
 
       // 2. Thêm task vào hàng đợi của tầng xuất phát
-      await redisClient.rPush(
-        this.getFloorQueueKey(fromFloor),
-        taskId
-      );
+      await redisClient.rPush(this.getFloorQueueKey(fromFloor), taskId);
 
       // 3. Thêm yêu cầu vào hàng đợi tổng (Sorted Set với score = timestamp)
       const globalQueueData = {
@@ -87,28 +84,27 @@ class LifterQueueService {
         fromFloor,
         toFloor,
         lifterId,
-        timestamp
+        timestamp,
       };
 
       await redisClient.zAdd(this.GLOBAL_QUEUE_KEY, {
         score: timestamp,
-        value: JSON.stringify(globalQueueData)
+        value: JSON.stringify(globalQueueData),
       });
 
       // Lấy vị trí trong hàng đợi tổng
-      const position = await redisClient.zRank(
-        this.GLOBAL_QUEUE_KEY,
-        JSON.stringify(globalQueueData)
-      );
+      const position = await redisClient.zRank(this.GLOBAL_QUEUE_KEY, JSON.stringify(globalQueueData));
 
-      console.log(`✓ Task ${taskId} registered: Floor ${fromFloor} → ${toFloor}, Lifter ${lifterId}, Position: ${position + 1}`);
+      console.log(
+        `✓ Task ${taskId} registered: Floor ${fromFloor} → ${toFloor}, Lifter ${lifterId}, Position: ${position + 1}`
+      );
 
       return {
         taskId,
         position: position + 1, // +1 vì rank bắt đầu từ 0
         timestamp,
         floorQueueLength: await this.getFloorQueueLength(fromFloor),
-        globalQueueLength: await this.getGlobalQueueLength()
+        globalQueueLength: await this.getGlobalQueueLength(),
       };
     } catch (error) {
       console.error('Error registering task:', error);
@@ -136,7 +132,7 @@ class LifterQueueService {
 
       return {
         ...taskData,
-        ...taskDetails
+        ...taskDetails,
       };
     } catch (error) {
       console.error('Error getting next task:', error);
@@ -214,7 +210,7 @@ class LifterQueueService {
         completedTask: taskDetails,
         nextTask,
         remainingInGlobalQueue: await this.getGlobalQueueLength(),
-        remainingInFloorQueue: await this.getFloorQueueLength(fromFloor)
+        remainingInFloorQueue: await this.getFloorQueueLength(fromFloor),
       };
     } catch (error) {
       console.error('Error completing task:', error);
@@ -273,7 +269,7 @@ class LifterQueueService {
       const end = limit > 0 ? limit - 1 : -1;
       const tasks = await redisClient.zRange(this.GLOBAL_QUEUE_KEY, 0, end);
 
-      return tasks.map(taskStr => JSON.parse(taskStr));
+      return tasks.map((taskStr) => JSON.parse(taskStr));
     } catch (error) {
       console.error('Error getting global queue:', error);
       return [];
@@ -367,7 +363,7 @@ class LifterQueueService {
         globalQueueLength: globalLength,
         processingTask: processingTask ? processingTask.taskId : null,
         floorQueues: floorStats,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       };
     } catch (error) {
       console.error('Error getting queue stats:', error);

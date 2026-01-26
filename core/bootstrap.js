@@ -13,70 +13,75 @@ const { logger } = require('../logger/logger');
 const container = new DIContainer();
 
 try {
-    // ==================== DATABASE ====================
+  // ==================== DATABASE ====================
 
-    /**
-     * Register database connection
-     */
-    container.register('db', () => {
-        logger.info('[Bootstrap] Initializing database connection...');
-        const connection = DatabaseFactory.createConnection(
-            dbConfig.type,
-            dbConfig.config,
-            'default'
-        );
-        return connection;
-    }, true); // Singleton
+  /**
+   * Register database connection
+   */
+  container.register(
+    'db',
+    () => {
+      logger.info('[Bootstrap] Initializing database connection...');
+      const connection = DatabaseFactory.createConnection(dbConfig.type, dbConfig.config, 'default');
+      return connection;
+    },
+    true
+  ); // Singleton
 
-    // ==================== REPOSITORIES ====================
+  // ==================== REPOSITORIES ====================
 
-    /**
-     * Register CellRepository
-     */
-    container.register('cellRepository', (c) => {
-        logger.info('[Bootstrap] Initializing CellRepository...');
-        const db = c.resolve('db');
-        return new CellRepository(db);
-    }, true); // Singleton
+  /**
+   * Register CellRepository
+   */
+  container.register(
+    'cellRepository',
+    (c) => {
+      logger.info('[Bootstrap] Initializing CellRepository...');
+      const db = c.resolve('db');
+      return new CellRepository(db);
+    },
+    true
+  ); // Singleton
 
-    // ==================== SERVICES ====================
+  // ==================== SERVICES ====================
 
-    /**
-     * Register LifterService
-     */
-    container.register('lifterService', (c) => {
-        const db = c.resolve('db');
-        return new LifterService(db);
-    }, true); // Singleton
+  /**
+   * Register LifterService
+   */
+  container.register(
+    'lifterService',
+    (c) => {
+      const db = c.resolve('db');
+      return new LifterService(db);
+    },
+    true
+  ); // Singleton
 
-    // ==================== CLEANUP ====================
+  // ==================== CLEANUP ====================
 
-    /**
-     * Graceful shutdown handler
-     */
-    const gracefulShutdown = async (signal) => {
+  /**
+   * Graceful shutdown handler
+   */
+  const gracefulShutdown = async (signal) => {
+    try {
+      // Dispose container (will close all services)
+      await container.dispose();
 
-        try {
-            // Dispose container (will close all services)
-            await container.dispose();
+      // Close database factory
+      await DatabaseFactory.closeAll();
 
-            // Close database factory
-            await DatabaseFactory.closeAll();
+      process.exit(0);
+    } catch (error) {
+      logger.error('[Bootstrap] Error during shutdown:', error);
+      process.exit(1);
+    }
+  };
 
-            process.exit(0);
-        } catch (error) {
-            logger.error('[Bootstrap] Error during shutdown:', error);
-            process.exit(1);
-        }
-    };
-
-    // Register shutdown handlers
-    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-
+  // Register shutdown handlers
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 } catch (error) {
-    process.exit(1);
+  process.exit(1);
 }
 
 // ==================== EXPORTS ====================

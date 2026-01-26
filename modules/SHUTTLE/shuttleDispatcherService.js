@@ -15,7 +15,8 @@ const MissionCoordinatorService = require('./MissionCoordinatorService');
 const PICKUP_LOCK_TIMEOUT = 300; // 5 minutes, same as endnode for consistency
 
 class ShuttleDispatcherService {
-  constructor(io) { // appEvents no longer needed here
+  constructor(io) {
+    // appEvents no longer needed here
     this.io = io;
     this.dispatchInterval = 5000;
     this.dispatcherTimer = null;
@@ -34,7 +35,6 @@ class ShuttleDispatcherService {
     const startTime = Date.now();
     let retryCount = 0;
     let acknowledged = false;
-
 
     // Initial publish
     await publishToTopic(topic, payload);
@@ -59,7 +59,7 @@ class ShuttleDispatcherService {
       if (shuttleState && (shuttleState.commandComplete === 0 || isActuallyRunningOurTask || isBusy)) {
         // Shuttle has acknowledged or started, stop retrying
         acknowledged = true;
-        const reason = isActuallyRunningOurTask ? 'Task ID Match' : (isBusy ? 'Shuttle Busy' : 'Command ACK (0)');
+        const reason = isActuallyRunningOurTask ? 'Task ID Match' : isBusy ? 'Shuttle Busy' : 'Command ACK (0)';
         clearInterval(retryInterval);
         this.activeMissions.delete(missionId);
         return;
@@ -67,7 +67,9 @@ class ShuttleDispatcherService {
 
       // Check timeout
       if (elapsed >= MISSION_CONFIG.RETRY_TIMEOUT) {
-        logger.error(`[ShuttleDispatcherService] Mission ${missionId} timed out after ${MISSION_CONFIG.RETRY_TIMEOUT}ms. No response from shuttle ${shuttleId}`);
+        logger.error(
+          `[ShuttleDispatcherService] Mission ${missionId} timed out after ${MISSION_CONFIG.RETRY_TIMEOUT}ms. No response from shuttle ${shuttleId}`
+        );
         clearInterval(retryInterval);
         this.activeMissions.delete(missionId);
         // Handle timeout - maybe mark task as failed, release locks, etc.
@@ -76,9 +78,10 @@ class ShuttleDispatcherService {
 
       // Publish/retry the mission
       retryCount++;
-      logger.debug(`[ShuttleDispatcherService] Retrying mission to ${topic} (attempt ${retryCount}, elapsed: ${elapsed}ms)`);
+      logger.debug(
+        `[ShuttleDispatcherService] Retrying mission to ${topic} (attempt ${retryCount}, elapsed: ${elapsed}ms)`
+      );
       await publishToTopic(topic, payload);
-
     }, MISSION_CONFIG.RETRY_INTERVAL);
 
     // Store the interval reference for potential cleanup
@@ -124,7 +127,6 @@ class ShuttleDispatcherService {
       // CRITICAL: Luôn luôn return LEFT_TO_RIGHT vì pickup node luôn ở bên trái cùng
       // Tất cả shuttle đều vào từ pickup node và đi sang phải vào storage area
       return 1; // LEFT_TO_RIGHT
-
     } catch (error) {
       logger.error('[ShuttleDispatcherService] Error determining row traffic direction:', error);
       return 1; // Default: LEFT_TO_RIGHT
@@ -167,7 +169,7 @@ class ShuttleDispatcherService {
           minDistance = distance;
           optimalShuttle = {
             ...shuttle,
-            qrCode: shuttle.current_node // Ensure qrCode property is set
+            qrCode: shuttle.current_node, // Ensure qrCode property is set
           };
         }
       }
@@ -184,7 +186,6 @@ class ShuttleDispatcherService {
     let pickupResourceKey = '';
 
     try {
-
       // 1. Get the next pending task (FIFO)
       task = await shuttleTaskQueueService.getNextPendingTask();
       if (!task) {
@@ -212,11 +213,11 @@ class ShuttleDispatcherService {
       const allShuttleStates = await getAllShuttleStates();
 
       const idleShuttles = allShuttleStates
-        .filter(s => s.shuttleStatus === 8) // 8 = IDLE
-        .map(s => ({
+        .filter((s) => s.shuttleStatus === 8) // 8 = IDLE
+        .map((s) => ({
           ...s,
           id: s.no || s.id, // Ensure ID is present
-          current_node: s.current_node || s.qrCode // Prioritize current_node, fallback to qrCode
+          current_node: s.current_node || s.qrCode, // Prioritize current_node, fallback to qrCode
         }));
 
       if (idleShuttles.length === 0) {
@@ -235,7 +236,6 @@ class ShuttleDispatcherService {
 
       // 4. Dispatch task to the chosen shuttle
       return await this.dispatchTaskToShuttle(task, optimalShuttle.id);
-
     } catch (error) {
       logger.error('[ShuttleDispatcherService] Error during task dispatch:', error);
       // If a lock was acquired and an unexpected error occurred, release it to prevent a deadlock
@@ -270,7 +270,7 @@ class ShuttleDispatcherService {
           pickupNodeQr: task.pickupNodeQr,
           endNodeQr: task.endNodeQr,
           itemInfo: task.itemInfo,
-          isCarrying: false
+          isCarrying: false,
         }
       );
 
@@ -284,7 +284,6 @@ class ShuttleDispatcherService {
       await ShuttleCounterService.updateCounter();
 
       return { success: true, taskId: task.taskId };
-
     } catch (error) {
       logger.error(`[ShuttleDispatcherService] Error in dispatchTaskToShuttle: ${error.message}`);
       throw error;

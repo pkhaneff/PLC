@@ -28,7 +28,6 @@ class ShuttleCounterService {
 
       logger.debug(`[ShuttleCounterService] Executing shuttle count: ${count}`);
       return count;
-
     } catch (error) {
       logger.error('[ShuttleCounterService] Error counting executing shuttles:', error);
       return 0;
@@ -48,7 +47,6 @@ class ShuttleCounterService {
 
       // Cache miss, tính lại
       return await this.getActiveShuttleCount();
-
     } catch (error) {
       logger.error('[ShuttleCounterService] Error getting count:', error);
       return 0;

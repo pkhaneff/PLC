@@ -12,8 +12,8 @@ const redis = createClient({
       console.log(`Redis: Reconnecting in ${delay}ms (attempt ${retries})`);
       return delay;
     },
-    connectTimeout: 10000 
-  }
+    connectTimeout: 10000,
+  },
 });
 
 // Event handlers

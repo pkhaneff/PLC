@@ -17,13 +17,10 @@ function convertPathToStepFormat(pathCells, options = {}) {
     return null;
   }
 
-  const {
-    lastStepAction = TASK_ACTIONS.NO_ACTION,
-    stepActions = []
-  } = options;
+  const { lastStepAction = TASK_ACTIONS.NO_ACTION, stepActions = [] } = options;
 
   const result = {
-    totalStep: pathCells.length
+    totalStep: pathCells.length,
   };
 
   pathCells.forEach((cell, index) => {
@@ -143,7 +140,12 @@ async function findShortestPathByCellAsync(startCell, endCell, floorId, options 
       return path;
     }
 
-    const { neighbors: validNeighbors, neighborCosts } = await getValidNeighborsFromDB(currentCell, floorId, endCell.qr_code, options);
+    const { neighbors: validNeighbors, neighborCosts } = await getValidNeighborsFromDB(
+      currentCell,
+      floorId,
+      endCell.qr_code,
+      options
+    );
 
     for (const neighborData of validNeighbors) {
       const neighborCell = neighborData.cell;
@@ -165,7 +167,11 @@ async function findShortestPathByCellAsync(startCell, endCell, floorId, options 
 
         if (!openSet.has(neighborCell.qr_code)) {
           openSet.add(neighborCell.qr_code);
-          openSetQueue.push({ fScore: fScore.get(neighborCell.qr_code), qrCode: neighborCell.qr_code, cell: neighborCell });
+          openSetQueue.push({
+            fScore: fScore.get(neighborCell.qr_code),
+            qrCode: neighborCell.qr_code,
+            cell: neighborCell,
+          });
         }
       }
     }
@@ -174,13 +180,12 @@ async function findShortestPathByCellAsync(startCell, endCell, floorId, options 
   return null; // No path found
 }
 
-
 async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options = {}) {
   const { col, row, direction_type, is_block } = cell;
   const neighbors = [];
   const results = {
     neighbors: [], // Array of { cell, cost }
-    neighborCosts: {} // Map qr_code to cost
+    neighborCosts: {}, // Map qr_code to cost
   };
 
   if (is_block === 1) {
@@ -191,7 +196,7 @@ async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options =
     up: [0, -1],
     down: [0, 1],
     left: [-1, 0],
-    right: [1, 0]
+    right: [1, 0],
   };
 
   const allowedDirections = parseDirectionType(direction_type);
@@ -226,14 +231,18 @@ async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options =
             // LEFT_TO_RIGHT: Only allow moving to higher col (right) or staying same col
             if (colDiff < 0) {
               // Moving to lower col (left) - VIOLATION
-              logger.debug(`[Pathfinding] Skipping ${neighborCell.qr_code}: violates LEFT_TO_RIGHT (col ${cell.col} → ${neighborCell.col})`);
+              logger.debug(
+                `[Pathfinding] Skipping ${neighborCell.qr_code}: violates LEFT_TO_RIGHT (col ${cell.col} → ${neighborCell.col})`
+              );
               continue;
             }
           } else if (options.requiredDirection === 2) {
             // RIGHT_TO_LEFT: Only allow moving to lower col (left) or staying same col
             if (colDiff > 0) {
               // Moving to higher col (right) - VIOLATION
-              logger.debug(`[Pathfinding] Skipping ${neighborCell.qr_code}: violates RIGHT_TO_LEFT (col ${cell.col} → ${neighborCell.col})`);
+              logger.debug(
+                `[Pathfinding] Skipping ${neighborCell.qr_code}: violates RIGHT_TO_LEFT (col ${cell.col} → ${neighborCell.col})`
+              );
               continue;
             }
           }
@@ -252,9 +261,10 @@ async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options =
         // Check if moving to this neighbor would go against traffic flow
         for (const trafficShuttle of trafficData) {
           // Find if this neighbor is on another shuttle's path
-          const pathIndex = trafficShuttle.path.findIndex(p => p.qrCode === neighborCell.qr_code);
+          const pathIndex = trafficShuttle.path.findIndex((p) => p.qrCode === neighborCell.qr_code);
 
-          if (pathIndex !== -1) { // Neighbor cell is on another shuttle's path
+          if (pathIndex !== -1) {
+            // Neighbor cell is on another shuttle's path
             // Check if our intended direction (dir) is opposite to the other shuttle's next intended direction
             const trafficDirection = trafficShuttle.path[pathIndex]?.direction;
             const otherShuttleMetadata = trafficShuttle.metadata || {};
@@ -275,7 +285,9 @@ async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options =
                 basePenalty += 30; // Total up to 230
               }
 
-              logger.debug(`[Pathfinding] High penalty for ${neighborCell.qr_code}: going ${dir} against ${trafficShuttle.shuttleId}'s direction ${trafficDirection} (carrying: ${otherShuttleMetadata.isCarrying})`);
+              logger.debug(
+                `[Pathfinding] High penalty for ${neighborCell.qr_code}: going ${dir} against ${trafficShuttle.shuttleId}'s direction ${trafficDirection} (carrying: ${otherShuttleMetadata.isCarrying})`
+              );
             } else if (trafficDirection && dir === trafficDirection) {
               // Going with traffic - small congestion penalty
               basePenalty = isShuttleCarrying ? 8 : 5; // Carrying shuttles prefer less congestion
@@ -300,7 +312,7 @@ async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options =
         // --- Apply Traffic Flow Corridor Penalty (Pillar 2) ---
         // Check if this neighbor is in a high-traffic corridor
         // Convert string direction to numeric direction for corridor check
-        const directionMap = { 'up': 1, 'right': 2, 'down': 3, 'left': 4 };
+        const directionMap = { up: 1, right: 2, down: 3, left: 4 };
         const numericDir = directionMap[dir];
 
         if (numericDir && options.corridors) {
@@ -311,7 +323,9 @@ async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options =
             if (corridor.dominantDirection === oppositeNumericDir) {
               // Going against dominant corridor flow - VERY HIGH penalty
               corridorPenalty = corridor.isHighTraffic ? 250 : 180;
-              logger.debug(`[Pathfinding] Corridor penalty for ${neighborCell.qr_code}: going against ${corridor.shuttleCount}-shuttle corridor (dominant dir: ${corridor.dominantDirection})`);
+              logger.debug(
+                `[Pathfinding] Corridor penalty for ${neighborCell.qr_code}: going against ${corridor.shuttleCount}-shuttle corridor (dominant dir: ${corridor.dominantDirection})`
+              );
             } else if (corridor.dominantDirection === numericDir) {
               // Going with corridor flow - small penalty for congestion
               corridorPenalty = corridor.isHighTraffic ? 25 : 12;
@@ -362,7 +376,7 @@ function getOppositeDirection(direction) {
     up: 'down',
     down: 'up',
     left: 'right',
-    right: 'left'
+    right: 'left',
   };
 
   return opposites[direction];
@@ -371,7 +385,7 @@ function getOppositeDirection(direction) {
 /**
  * Find shortest path between two QR codes (both start and end are QR codes).
  * This is the primary pathfinding function.
- * 
+ *
  * @param {string} startQrCode - Starting QR code
  * @param {string} endQrCode - Ending QR code
  * @param {number} floorId - Floor ID
@@ -388,9 +402,10 @@ async function findShortestPath(startQrCode, endQrCode, floorId, options = {}) {
       const NodeOccupationService = require('./NodeOccupationService');
       const occupiedMap = await NodeOccupationService.getAllOccupiedNodes();
 
-      const dynamicAvoidList = Object.keys(occupiedMap).filter(qr =>
-        qr !== startQrCode && // Don't avoid our own start
-        qr !== endQrCode      // Don't avoid our destination
+      const dynamicAvoidList = Object.keys(occupiedMap).filter(
+        (qr) =>
+          qr !== startQrCode && // Don't avoid our own start
+          qr !== endQrCode // Don't avoid our destination
       );
 
       options = { ...options, avoid: dynamicAvoidList };
@@ -462,12 +477,11 @@ async function findShortestPathByQrCode(startQrCode, endQrCode, floorId, options
   return findShortestPath(startQrCode, endQrCode, floorId, options);
 }
 
-
 module.exports = {
   findShortestPath,
   findShortestPathLegacy,
   findShortestPathByQrCode, // Export for backward compatibility
   convertPathToStepFormat,
   parseDirectionType,
-  getValidNeighborsFromDB
+  getValidNeighborsFromDB,
 };

@@ -6,10 +6,9 @@ const { logger } = require('../../logger/logger');
  * This is used to reserve resources like endNodes and pickupNodes.
  */
 class ReservationService {
-
   /**
    * Attempts to acquire a lock for a specific resource.
-   * 
+   *
    * @param {string} resourceKey - The unique key for the resource to lock (e.g., 'endnode:lock:123').
    * @param {string} ownerId - An identifier for who owns the lock (e.g., a taskId).
    * @param {number} timeout - The lock's expiration time in seconds.
@@ -36,7 +35,7 @@ class ReservationService {
 
   /**
    * Releases a lock for a specific resource.
-   * 
+   *
    * @param {string} resourceKey - The unique key for the resource to unlock.
    * @returns {Promise<boolean>} A promise that resolves to true if the lock was released, false otherwise.
    */
@@ -46,7 +45,9 @@ class ReservationService {
       if (result > 0) {
         return true;
       }
-      logger.warn(`[ReservationService] Attempted to release a lock that did not exist or already expired: ${resourceKey}`);
+      logger.warn(
+        `[ReservationService] Attempted to release a lock that did not exist or already expired: ${resourceKey}`
+      );
       return false;
     } catch (error) {
       logger.error(`[ReservationService] Error releasing lock for resource ${resourceKey}:`, error);

@@ -11,4 +11,3 @@ router.put('/:plcId/active', plcController.setPlcActive);
 router.post('/process', plcController.processAvailablePLC);
 
 module.exports = router;
- 

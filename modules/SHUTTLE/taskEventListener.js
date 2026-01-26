@@ -44,7 +44,7 @@ class TaskEventListener {
     this.client = mqtt.connect(MQTT_BROKER_URL, {
       clientId: `task_event_listener_${Date.now()}`,
       username: MQTT_USERNAME,
-      password: MQTT_PASSWORD
+      password: MQTT_PASSWORD,
     });
 
     // Ensure we only subscribe and set up message handling AFTER a successful connection.
@@ -72,19 +72,22 @@ class TaskEventListener {
 
     // --- Redis Subscriber for Lifter Events ---
     this.subscriber = redisClient.duplicate();
-    this.subscriber.connect().then(() => {
-      logger.info('[TaskEventListener] Redis Subscriber connected');
-      this.subscriber.subscribe('lifter:events', (message) => {
-        try {
-          const payload = JSON.parse(message);
-          this.handleLifterEvent(payload);
-        } catch (e) {
-          logger.error('[TaskEventListener] Error parsing lifter event:', e);
-        }
+    this.subscriber
+      .connect()
+      .then(() => {
+        logger.info('[TaskEventListener] Redis Subscriber connected');
+        this.subscriber.subscribe('lifter:events', (message) => {
+          try {
+            const payload = JSON.parse(message);
+            this.handleLifterEvent(payload);
+          } catch (e) {
+            logger.error('[TaskEventListener] Error parsing lifter event:', e);
+          }
+        });
+      })
+      .catch((err) => {
+        logger.error('[TaskEventListener] Redis Subscriber connection failed:', err);
       });
-    }).catch(err => {
-      logger.error('[TaskEventListener] Redis Subscriber connection failed:', err);
-    });
   }
 
   async handleLifterEvent(payload) {
@@ -96,7 +99,9 @@ class TaskEventListener {
       const waitingShuttles = await redisClient.sMembers(waitingKey);
 
       if (waitingShuttles && waitingShuttles.length > 0) {
-        logger.info(`[TaskEventListener] Found ${waitingShuttles.length} shuttles waiting for Lifter at F${floorId}. Resuming...`);
+        logger.info(
+          `[TaskEventListener] Found ${waitingShuttles.length} shuttles waiting for Lifter at F${floorId}. Resuming...`
+        );
 
         for (const sId of waitingShuttles) {
           // Resume shuttle
@@ -161,13 +166,17 @@ class TaskEventListener {
             const isLifterBusy = lifterStatus && lifterStatus.status === 'MOVING';
 
             if (isLifterAtFloor && !isLifterBusy) {
-              logger.info(`[TaskEventListener] Lifter already at F${floor} and idle. Resuming shuttle ${shuttleId} immediately.`);
+              logger.info(
+                `[TaskEventListener] Lifter already at F${floor} and idle. Resuming shuttle ${shuttleId} immediately.`
+              );
 
               // Resume shuttle logic (duplicated from handleLifterEvent for now to be safe)
               if (this.dispatcher) {
                 const taskInfo = await shuttleTaskQueueService.getShuttleTask(shuttleId);
                 if (taskInfo) {
-                  logger.info(`[TaskEventListener] Immediate Resume: Resuming task ${taskInfo.taskId} for shuttle ${shuttleId}`);
+                  logger.info(
+                    `[TaskEventListener] Immediate Resume: Resuming task ${taskInfo.taskId} for shuttle ${shuttleId}`
+                  );
                   await this.dispatcher.dispatchTaskToShuttle(taskInfo, shuttleId);
                   await redisClient.sRem(`waiting:lifter:${floor}`, shuttleId);
                 }
@@ -218,7 +227,9 @@ class TaskEventListener {
 
         default:
           // Other informational events (shuttle-resumed, etc.) can be debugged
-          logger.debug(`[TaskEventListener] Ignoring informational event type: ${event}. Payload: ${message.toString()}`);
+          logger.debug(
+            `[TaskEventListener] Ignoring informational event type: ${event}. Payload: ${message.toString()}`
+          );
           break;
       }
     } catch (error) {
@@ -235,17 +246,16 @@ class TaskEventListener {
         return;
       }
 
-      const currentState = await getShuttleState(shuttleId) || {};
+      const currentState = (await getShuttleState(shuttleId)) || {};
       await updateShuttleState(shuttleId, {
         ...currentState,
         current_node: initialNode,
-        qrCode: initialNode
+        qrCode: initialNode,
       });
 
       // Block initial node where shuttle starts
       await NodeOccupationService.blockNode(initialNode, shuttleId);
       const nodeName = await cellService.getDisplayNameWithoutFloor(initialNode);
-
     } catch (error) {
       logger.error(`[TaskEventListener] Error handling shuttle-initialized for ${shuttleId}:`, error);
     }
@@ -260,11 +270,11 @@ class TaskEventListener {
         return;
       }
 
-      const currentState = await getShuttleState(shuttleId) || {};
+      const currentState = (await getShuttleState(shuttleId)) || {};
       await updateShuttleState(shuttleId, {
         ...currentState,
         current_node: currentNode,
-        qrCode: currentNode
+        qrCode: currentNode,
       });
       logger.debug(`[TaskEventListener] Updated shuttle ${shuttleId} position to ${currentNode}`);
 
@@ -290,14 +300,15 @@ class TaskEventListener {
       const config = configEntry[1];
 
       if (currentNode === config.safetyNodeExit) {
-
         // 1. Check if pickup was completed (flag in task)
         const taskKey = shuttleTaskQueueService.getTaskKey(taskInfo.taskId);
         const pickupCompleted = await redisClient.hGet(taskKey, 'pickupCompleted');
 
         if (pickupCompleted !== 'true') {
           // Pickup NOT completed yet - shuttle is going TO pickup, not FROM pickup
-          logger.debug(`[TaskEventListener] Shuttle ${shuttleId} at safety exit but pickup not completed. Going TO pickup, not releasing lock.`);
+          logger.debug(
+            `[TaskEventListener] Shuttle ${shuttleId} at safety exit but pickup not completed. Going TO pickup, not releasing lock.`
+          );
           return;
         }
 
@@ -306,7 +317,9 @@ class TaskEventListener {
 
         if (!shuttleState || !shuttleState.isCarrying) {
           // Not carrying cargo - should not happen if pickupCompleted is true, but check anyway
-          logger.warn(`[TaskEventListener] Shuttle ${shuttleId} at safety exit with pickupCompleted=true but not carrying cargo!`);
+          logger.warn(
+            `[TaskEventListener] Shuttle ${shuttleId} at safety exit with pickupCompleted=true but not carrying cargo!`
+          );
           return;
         }
 
@@ -326,7 +339,6 @@ class TaskEventListener {
         }
       }
       // --- End 2-Stage Sequential Logic ---
-
     } catch (error) {
       logger.error(`[TaskEventListener] Error handling shuttle-moved for ${shuttleId}:`, error);
     }
@@ -363,7 +375,11 @@ class TaskEventListener {
 
         const isEndNodeInRow = await RowCoordinationService.isNodeInAssignedRow(endNodeQr, endNodeFloorId, targetRow);
         if (!isEndNodeInRow) {
-          const nearestNode = await RowCoordinationService.findNearestNodeInRow(pickupNodeQr, targetRow, endNodeFloorId);
+          const nearestNode = await RowCoordinationService.findNearestNodeInRow(
+            pickupNodeQr,
+            targetRow,
+            endNodeFloorId
+          );
           if (!nearestNode) {
             await shuttleTaskQueueService.updateTaskStatus(taskId, 'failed');
             return;
@@ -385,10 +401,15 @@ class TaskEventListener {
       if (!requiredDirection) {
         const pickupCell = await cellService.getCellByQrCode(pickupNodeQr, endNodeFloorId);
         const endCell = await cellService.getCellByQrCode(actualEndNodeQr, endNodeFloorId);
-        requiredDirection = (pickupCell && endCell && endCell.col < pickupCell.col) ? 2 : 1;
+        requiredDirection = pickupCell && endCell && endCell.col < pickupCell.col ? 2 : 1;
       }
 
-      const locked = await RowDirectionManager.lockRowDirection(targetRow, endNodeFloorId, requiredDirection, shuttleId);
+      const locked = await RowDirectionManager.lockRowDirection(
+        targetRow,
+        endNodeFloorId,
+        requiredDirection,
+        shuttleId
+      );
       if (!locked) {
         await shuttleTaskQueueService.updateTaskStatus(taskId, 'failed');
         return;
@@ -411,12 +432,12 @@ class TaskEventListener {
           isCarrying: true,
           enforceOneWay: enforceOneWay,
           targetRow: targetRow,
-          requiredDirection: requiredDirection
+          requiredDirection: requiredDirection,
         }
       );
 
       // 2. Update shuttle package state in Redis
-      const currentShuttleState = await getShuttleState(shuttleId) || {};
+      const currentShuttleState = (await getShuttleState(shuttleId)) || {};
       await updateShuttleState(shuttleId, { ...currentShuttleState, isCarrying: true, packageStatus: 1 });
       await redisClient.hSet(taskKey, 'isCarrying', 'true');
 
@@ -427,7 +448,6 @@ class TaskEventListener {
       } else {
         mqttClientService.publishToTopic(missionTopic, missionPayload);
       }
-
     } catch (error) {
       logger.error(`[TaskEventListener] Error in unified Path 2 calculation: ${error.message}`);
       await shuttleTaskQueueService.updateTaskStatus(taskId, 'failed');
@@ -445,7 +465,9 @@ class TaskEventListener {
         return;
       }
 
-      logger.info(`[TaskEventListener] Shuttle ${shuttleId} arrived at Lifter. Calling lifter to target floor ${finalTargetFloorId}.`);
+      logger.info(
+        `[TaskEventListener] Shuttle ${shuttleId} arrived at Lifter. Calling lifter to target floor ${finalTargetFloorId}.`
+      );
 
       // 1. Gọi Lifter tới tầng đích
       // LƯU Ý: Trong thực tế, Shuttle phải ĐI VÀO Lifter trước khi Lifter di chuyển.
@@ -456,7 +478,9 @@ class TaskEventListener {
         throw new Error(`Failed to move lifter: ${moveResult.message}`);
       }
 
-      logger.info(`[TaskEventListener] Lifter reached floor ${finalTargetFloorId}. Shuttle ${shuttleId} recalculating final leg.`);
+      logger.info(
+        `[TaskEventListener] Lifter reached floor ${finalTargetFloorId}. Shuttle ${shuttleId} recalculating final leg.`
+      );
 
       // 2. Sau khi tới tầng đích, Shuttle tính toán chặng cuối cùng từ Lifter tới Đích
       // Logic: Nếu chưa mang hàng (isCarrying=false) thì là chặng đi lấy hàng (PICKUP), ngược lại là đi cất hàng (TASK_COMPLETE)
@@ -472,7 +496,7 @@ class TaskEventListener {
           onArrival: targetArrivalEvent,
           isCarrying: isCarrying,
           action: targetAction,
-          currentFloorId: finalTargetFloorId // Thông báo cho logic là đang ở tầng đích
+          currentFloorId: finalTargetFloorId, // Thông báo cho logic là đang ở tầng đích
         }
       );
 
@@ -483,7 +507,6 @@ class TaskEventListener {
       } else {
         mqttClientService.publishToTopic(missionTopic, missionPayload);
       }
-
     } catch (error) {
       logger.error(`[TaskEventListener] Error in handleArrivedAtLifter for ${shuttleId}: ${error.message}`);
     }
@@ -502,15 +525,19 @@ class TaskEventListener {
 
     const endNodeCell = await cellService.getCellByQrCode(taskDetails.endNodeQr, taskDetails.endNodeFloorId);
     if (endNodeCell) {
-      const palletId = typeof taskDetails.itemInfo === 'object' ? taskDetails.itemInfo.id || JSON.stringify(taskDetails.itemInfo) : taskDetails.itemInfo;
+      const palletId =
+        typeof taskDetails.itemInfo === 'object'
+          ? taskDetails.itemInfo.id || JSON.stringify(taskDetails.itemInfo)
+          : taskDetails.itemInfo;
 
       await cellService.updateCellHasBox(endNodeCell.id, true, palletId);
 
       const endNodeLockKey = `endnode:lock:${endNodeCell.id}`;
       await ReservationService.releaseLock(endNodeLockKey);
-
     } else {
-      logger.error(`[TaskEventListener] Cannot find endNode cell QR '${taskDetails.endNodeQr}' in DB. Cannot update is_has_box or release lock.`);
+      logger.error(
+        `[TaskEventListener] Cannot find endNode cell QR '${taskDetails.endNodeQr}' in DB. Cannot update is_has_box or release lock.`
+      );
     }
 
     await shuttleTaskQueueService.updateTaskStatus(taskId, 'completed');
@@ -522,9 +549,10 @@ class TaskEventListener {
 
     if (batchId && targetRow !== undefined && targetFloor !== undefined) {
       try {
-        const itemId = typeof taskDetails.itemInfo === 'object'
-          ? (taskDetails.itemInfo.ID || taskDetails.itemInfo.id || JSON.stringify(taskDetails.itemInfo))
-          : taskDetails.itemInfo;
+        const itemId =
+          typeof taskDetails.itemInfo === 'object'
+            ? taskDetails.itemInfo.ID || taskDetails.itemInfo.id || JSON.stringify(taskDetails.itemInfo)
+            : taskDetails.itemInfo;
 
         await CellRepository.updateNodeStatus(taskDetails.endNodeQr, { item_ID: itemId });
 
@@ -535,7 +563,6 @@ class TaskEventListener {
         const remainingInRow = await redisClient.decr(counterKey);
 
         if (remainingInRow <= 0) {
-
           const masterBatchKey = `batch:master:${batchId}`;
           const masterBatchData = await redisClient.get(masterBatchKey);
 
@@ -557,7 +584,6 @@ class TaskEventListener {
 
           await redisClient.del(counterKey);
         }
-
       } catch (rowError) {
         logger.error(`[TaskEventListener] Error in row completion detection for batch ${batchId}:`, rowError);
       }
@@ -583,7 +609,7 @@ class TaskEventListener {
     logger.debug(`[TaskEventListener] Shuttle ${shuttleId} remains at current node, keeping occupation`);
 
     // 6. Force update shuttle status to IDLE (8) in Redis so Dispatcher can pick it up immediately
-    const currentState = await getShuttleState(shuttleId) || {};
+    const currentState = (await getShuttleState(shuttleId)) || {};
     await updateShuttleState(shuttleId, {
       ...currentState,
       shuttleStatus: 8,
@@ -592,7 +618,7 @@ class TaskEventListener {
       current_node: taskDetails.endNodeQr,
       qrCode: taskDetails.endNodeQr,
       taskId: '',
-      targetQr: ''
+      targetQr: '',
     });
 
     // 7. Tự động xử lý inbound_pallet_queue sau khi shuttle IDLE
@@ -602,7 +628,9 @@ class TaskEventListener {
     setTimeout(async () => {
       const result = await controller.autoProcessInboundQueue(shuttleId);
       if (!result.success) {
-        logger.debug(`[TaskEventListener] autoProcessInboundQueue failed (${result.reason}), falling back to dispatchNextTask`);
+        logger.debug(
+          `[TaskEventListener] autoProcessInboundQueue failed (${result.reason}), falling back to dispatchNextTask`
+        );
         if (this.dispatcher) {
           this.dispatcher.dispatchNextTask();
         }

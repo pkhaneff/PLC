@@ -8,7 +8,7 @@ const redisClient = require('../../redis/init.redis');
  */
 const DIRECTION = {
   LEFT_TO_RIGHT: 1,
-  RIGHT_TO_LEFT: 2
+  RIGHT_TO_LEFT: 2,
 };
 
 /**
@@ -50,11 +50,13 @@ class RowDirectionManager {
           direction,
           shuttles: [shuttleId],
           lockedAt: Date.now(),
-          lockedBy: shuttleId
+          lockedBy: shuttleId,
         };
 
         await redisClient.set(key, JSON.stringify(lockData), { EX: this.LOCK_TTL });
-        logger.info(`[RowDirectionManager] Locked row ${rowIdentifier} (floor ${floorId}) with direction ${direction} for shuttle ${shuttleId}`);
+        logger.info(
+          `[RowDirectionManager] Locked row ${rowIdentifier} (floor ${floorId}) with direction ${direction} for shuttle ${shuttleId}`
+        );
         return true;
       }
 
@@ -66,15 +68,18 @@ class RowDirectionManager {
         if (!lock.shuttles.includes(shuttleId)) {
           lock.shuttles.push(shuttleId);
           await redisClient.set(key, JSON.stringify(lock), { EX: this.LOCK_TTL });
-          logger.debug(`[RowDirectionManager] Shuttle ${shuttleId} joined row ${rowIdentifier} (direction ${direction})`);
+          logger.debug(
+            `[RowDirectionManager] Shuttle ${shuttleId} joined row ${rowIdentifier} (direction ${direction})`
+          );
         }
         return true;
       } else {
         // Khác direction, từ chối
-        logger.warn(`[RowDirectionManager] Shuttle ${shuttleId} cannot enter row ${rowIdentifier}: direction mismatch (required: ${lock.direction}, requested: ${direction})`);
+        logger.warn(
+          `[RowDirectionManager] Shuttle ${shuttleId} cannot enter row ${rowIdentifier}: direction mismatch (required: ${lock.direction}, requested: ${direction})`
+        );
         return false;
       }
-
     } catch (error) {
       logger.error(`[RowDirectionManager] Error locking row direction:`, error);
       return false;
@@ -92,17 +97,18 @@ class RowDirectionManager {
       if (!existingLock) return;
 
       const lock = JSON.parse(existingLock);
-      lock.shuttles = lock.shuttles.filter(id => id !== shuttleId);
+      lock.shuttles = lock.shuttles.filter((id) => id !== shuttleId);
 
       if (lock.shuttles.length === 0) {
         // Không còn shuttle nào, xóa lock hoàn toàn
         await redisClient.del(key);
-        logger.info(`[RowDirectionManager] Row ${rowIdentifier} (floor ${floorId}) direction lock released (no shuttles left)`);
+        logger.info(
+          `[RowDirectionManager] Row ${rowIdentifier} (floor ${floorId}) direction lock released (no shuttles left)`
+        );
       } else {
         // Còn shuttle khác, update lock
         await redisClient.set(key, JSON.stringify(lock), { EX: this.LOCK_TTL });
       }
-
     } catch (error) {
       logger.error(`[RowDirectionManager] Error releasing shuttle from row:`, error);
     }

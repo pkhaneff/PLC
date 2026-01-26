@@ -95,10 +95,7 @@ class Scheduler {
         // Nếu chưa có targetRow, cần xác định row cho batch
         if (!targetRow) {
           // Tìm row khả dụng đầu tiên (FIFO)
-          const availableNodes = await CellRepository.findAvailableNodesByFIFO(
-            stagedTask.palletType,
-            targetFloor
-          );
+          const availableNodes = await CellRepository.findAvailableNodesByFIFO(stagedTask.palletType, targetFloor);
 
           if (!availableNodes || availableNodes.length === 0) {
             logger.warn(`[Scheduler] No available nodes for palletType ${stagedTask.palletType}. Re-queuing.`);
@@ -120,7 +117,6 @@ class Scheduler {
           if (!targetRow) {
             targetRow = firstAvailableRow; // Fallback
           }
-
         } else {
           const assignedRow = await RowCoordinationService.getAssignedRow(batchId);
           if (assignedRow && assignedRow !== targetRow) {
@@ -130,10 +126,7 @@ class Scheduler {
       } else {
         // Single shuttle mode - dùng FIFO row nếu chưa có targetRow
         if (!targetRow) {
-          const availableNodes = await CellRepository.findAvailableNodesByFIFO(
-            stagedTask.palletType,
-            targetFloor
-          );
+          const availableNodes = await CellRepository.findAvailableNodesByFIFO(stagedTask.palletType, targetFloor);
 
           if (!availableNodes || availableNodes.length === 0) {
             logger.warn(`[Scheduler] No available nodes for palletType ${stagedTask.palletType}. Re-queuing.`);
@@ -154,11 +147,7 @@ class Scheduler {
         return;
       }
 
-      const candidateNodes = await CellRepository.getAvailableNodesInRow(
-        targetFloor,
-        targetRow,
-        stagedTask.palletType
-      );
+      const candidateNodes = await CellRepository.getAvailableNodesInRow(targetFloor, targetRow, stagedTask.palletType);
 
       if (!candidateNodes || candidateNodes.length === 0) {
         logger.warn(`[Scheduler] No available nodes in row ${targetRow} (floor ${targetFloor}). Re-queuing task.`);
@@ -188,7 +177,7 @@ class Scheduler {
             endNodeRow: node.row,
             palletType: stagedTask.palletType,
             targetRow: targetRow, // Preserve metadata
-            targetFloor: targetFloor
+            targetFloor: targetFloor,
           };
 
           await shuttleTaskQueueService.registerTask(finalTaskData);
@@ -202,7 +191,6 @@ class Scheduler {
         logger.warn(`[Scheduler] All nodes in row ${targetRow} were locked. Re-queuing task.`);
         await redisClient.lPush(TASK_STAGING_QUEUE_KEY, stagedTaskJSON);
       }
-
     } catch (error) {
       logger.error('[Scheduler] Error during processing cycle:', error);
       // If an error occurred after popping a task, try to push it back

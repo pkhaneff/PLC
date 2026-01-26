@@ -68,11 +68,14 @@ class ShuttleTaskQueueService {
         taskId,
         timestamp,
         status: 'pending', // Trạng thái ban đầu
-        ...taskData
+        ...taskData,
       };
 
       // Chuyển đổi itemInfo thành JSON string nếu nó là object/array
-      if (fullTaskDetails.itemInfo && (typeof fullTaskDetails.itemInfo === 'object' || Array.isArray(fullTaskDetails.itemInfo))) {
+      if (
+        fullTaskDetails.itemInfo &&
+        (typeof fullTaskDetails.itemInfo === 'object' || Array.isArray(fullTaskDetails.itemInfo))
+      ) {
         fullTaskDetails.itemInfo = JSON.stringify(fullTaskDetails.itemInfo);
       }
 
@@ -82,21 +85,17 @@ class ShuttleTaskQueueService {
       // CRITICAL FIX: Use taskId as value instead of JSON object to avoid matching issues
       await redisClient.zAdd(this.GLOBAL_TASK_QUEUE_KEY, {
         score: timestamp,
-        value: taskId // Simple string, easy to remove later
+        value: taskId, // Simple string, easy to remove later
       });
 
       // Lấy vị trí trong hàng đợi tổng
-      const position = await redisClient.zRank(
-        this.GLOBAL_TASK_QUEUE_KEY,
-        taskId
-      );
-
+      const position = await redisClient.zRank(this.GLOBAL_TASK_QUEUE_KEY, taskId);
 
       return {
         taskId,
         position: position + 1, // +1 vì rank bắt đầu từ 0
         timestamp,
-        globalQueueLength: await this.getGlobalQueueLength()
+        globalQueueLength: await this.getGlobalQueueLength(),
       };
     } catch (error) {
       console.error('Error registering shuttle task:', error);
@@ -125,13 +124,16 @@ class ShuttleTaskQueueService {
       if (taskDetails && taskDetails.status === 'pending') {
         // Chuyển đổi lại itemInfo thành object/array
         if (taskDetails.itemInfo && typeof taskDetails.itemInfo === 'string') {
-          try { taskDetails.itemInfo = JSON.parse(taskDetails.itemInfo); } catch (e) { /* ignore */ }
+          try {
+            taskDetails.itemInfo = JSON.parse(taskDetails.itemInfo);
+          } catch (e) {
+            /* ignore */
+          }
         }
         return taskDetails;
       } else {
         return null;
       }
-
     } catch (error) {
       console.error('Error getting next pending shuttle task:', error);
       throw error;
@@ -162,17 +164,27 @@ class ShuttleTaskQueueService {
       // FIXED: Now tasks array contains taskId strings, not JSON objects
       const tasks = await redisClient.zRange(this.GLOBAL_TASK_QUEUE_KEY, 0, end);
 
-      const fullTasks = await Promise.all(tasks.map(async taskId => {
-        const taskDetails = await this.getTaskDetails(taskId);
-        // Chuyển đổi lại itemInfo và externalSignalData thành object
-        if (taskDetails && taskDetails.itemInfo && typeof taskDetails.itemInfo === 'string') {
-          try { taskDetails.itemInfo = JSON.parse(taskDetails.itemInfo); } catch (e) { /* ignore */ }
-        }
-        if (taskDetails && taskDetails.externalSignalData && typeof taskDetails.externalSignalData === 'string') {
-          try { taskDetails.externalSignalData = JSON.parse(taskDetails.externalSignalData); } catch (e) { /* ignore */ }
-        }
-        return taskDetails;
-      }));
+      const fullTasks = await Promise.all(
+        tasks.map(async (taskId) => {
+          const taskDetails = await this.getTaskDetails(taskId);
+          // Chuyển đổi lại itemInfo và externalSignalData thành object
+          if (taskDetails && taskDetails.itemInfo && typeof taskDetails.itemInfo === 'string') {
+            try {
+              taskDetails.itemInfo = JSON.parse(taskDetails.itemInfo);
+            } catch (e) {
+              /* ignore */
+            }
+          }
+          if (taskDetails && taskDetails.externalSignalData && typeof taskDetails.externalSignalData === 'string') {
+            try {
+              taskDetails.externalSignalData = JSON.parse(taskDetails.externalSignalData);
+            } catch (e) {
+              /* ignore */
+            }
+          }
+          return taskDetails;
+        })
+      );
 
       return fullTasks;
     } catch (error) {
@@ -192,7 +204,11 @@ class ShuttleTaskQueueService {
       if (Object.keys(details).length > 0) {
         // Chuyển đổi lại itemInfo thành object/array
         if (details.itemInfo && typeof details.itemInfo === 'string') {
-          try { details.itemInfo = JSON.parse(details.itemInfo); } catch (e) { /* ignore */ }
+          try {
+            details.itemInfo = JSON.parse(details.itemInfo);
+          } catch (e) {
+            /* ignore */
+          }
         }
         return details;
       }
@@ -205,7 +221,7 @@ class ShuttleTaskQueueService {
 
   /**
    * Get the active task currently assigned to a shuttle.
-   * @param {string} shuttleId 
+   * @param {string} shuttleId
    * @returns {Promise<object|null>} Task details or null
    */
   async getShuttleTask(shuttleId) {
@@ -261,7 +277,9 @@ class ShuttleTaskQueueService {
         // Now we can simply use taskId instead of complex JSON matching
         const removeResult = await redisClient.zRem(this.GLOBAL_TASK_QUEUE_KEY, taskId);
         if (removeResult === 0) {
-          logger.warn(`[TaskQueueService] Failed to remove task ${taskId} from global pending queue. Task may not exist in queue.`);
+          logger.warn(
+            `[TaskQueueService] Failed to remove task ${taskId} from global pending queue. Task may not exist in queue.`
+          );
         }
       } else if (status === 'completed') {
         // Find assigned shuttle to clear mapping
@@ -272,7 +290,6 @@ class ShuttleTaskQueueService {
 
         await redisClient.sRem(this.PROCESSING_TASKS_KEY, taskId);
         await redisClient.del(taskKey);
-
       } else if (status === 'failed') {
         const taskDetails = await this.getTaskDetails(taskId);
         if (taskDetails && taskDetails.assignedShuttleId) {

@@ -8,7 +8,7 @@ const { notFoundHandler, errorHandler } = require('./middlewares');
 const plcManager = require('./modules/PLC/plcManager');
 const { plcsConfig } = require('./modules/PLC/configPLC');
 const healthController = require('./controllers/health.controller');
-const { logger } = require('./logger/logger.js')
+const { logger } = require('./logger/logger.js');
 const shuttleDispatcherService = require('./modules/SHUTTLE/shuttleDispatcherService');
 const taskEventListener = require('./modules/SHUTTLE/taskEventListener');
 const { initializeMqttClient } = require('./services/mqttClientService');
@@ -31,37 +31,37 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 
 async function startServer() {
-    try {
-        await plcManager.initializeMultiplePLCs(plcsConfig);
-        healthController.setInitialized(true);
-        logger.info('[Server] All PLCs initialized successfully!');
+  try {
+    await plcManager.initializeMultiplePLCs(plcsConfig);
+    healthController.setInitialized(true);
+    logger.info('[Server] All PLCs initialized successfully!');
 
-        // Initialize 3-Pillar System
-        await PathCacheService.initialize(); // Pillar 1: Traffic Center with auto-cleanup
+    // Initialize 3-Pillar System
+    await PathCacheService.initialize(); // Pillar 1: Traffic Center with auto-cleanup
 
-        const dispatcher = new shuttleDispatcherService(io);
+    const dispatcher = new shuttleDispatcherService(io);
 
-        initializeMqttClient(io);
-        taskEventListener.initialize();
-        taskEventListener.setDispatcher(dispatcher);
+    initializeMqttClient(io);
+    taskEventListener.initialize();
+    taskEventListener.setDispatcher(dispatcher);
 
-        server.listen(PORT, () => {
-            dispatcher.startDispatcher();
-        });
-    } catch (error) {
-        logger.error('[Server] Failed to start:', error);
-    }
+    server.listen(PORT, () => {
+      dispatcher.startDispatcher();
+    });
+  } catch (error) {
+    logger.error('[Server] Failed to start:', error);
+  }
 }
 
 // Graceful shutdown
 process.on('SIGINT', () => {
-    PathCacheService.stopAutoCleanup();
-    process.exit(0);
+  PathCacheService.stopAutoCleanup();
+  process.exit(0);
 });
 
 process.on('SIGTERM', () => {
-    PathCacheService.stopAutoCleanup();
-    process.exit(0);
+  PathCacheService.stopAutoCleanup();
+  process.exit(0);
 });
 
 startServer();
