@@ -6,7 +6,7 @@ const redisClient = require('../redis/init.redis');
 const { findShortestPath } = require('../modules/SHUTTLE/pathfinding');
 const { getShuttleState } = require('../modules/SHUTTLE/shuttleStateCache');
 const shuttleConfig = require('../config/shuttle.config');
-const CellRepository = require('../repository/cell.repository');
+const { cellRepository: CellRepository } = require('../core/bootstrap');
 const shuttleDispatcherService = require('../modules/SHUTTLE/shuttleDispatcherService');
 const { publishToTopic } = require('../services/mqttClientService');
 

@@ -14,10 +14,9 @@ const RowCoordinationService = require('./RowCoordinationService');
 const PathCacheService = require('./PathCacheService');
 const { TASK_ACTIONS, MQTT_TOPICS, SHUTTLE_STATUS, warehouses } = require('../../config/shuttle.config');
 const redisClient = require('../../redis/init.redis');
-const CellRepository = require('../../repository/cell.repository');
+const { cellRepository: CellRepository, lifterService } = require('../../core/bootstrap');
 const controller = require('../../controllers/shuttle.controller');
 const MissionCoordinatorService = require('./MissionCoordinatorService');
-const lifterService = require('../Lifter/lifterService');
 
 const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || 'mqtt://10.14.80.78:1883';
 const MQTT_USERNAME = process.env.MQTT_USERNAME || 'admin';

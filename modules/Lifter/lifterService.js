@@ -1,9 +1,18 @@
-const pool = require('../../config/database');
 const lifterQueueService = require('./lifterQueueService');
 const plcManager = require('../PLC/plcManager');
 const { logger } = require('../../logger/logger');
 
+/**
+ * LifterService - Refactored to use Dependency Injection
+ * Tuân thủ Dependency Inversion Principle
+ */
 class LifterService {
+  /**
+   * @param {Object} dbConnection - Database connection instance (injected)
+   */
+  constructor(dbConnection) {
+    this.db = dbConnection;
+  }
   /**
    * Lấy lifter cell trên một tầng cụ thể
    * Mỗi lifter có nhiều cells trên các tầng khác nhau nhưng cùng vị trí (col, row)
@@ -21,7 +30,7 @@ class LifterService {
         LIMIT 1
       `;
 
-      const [rows] = await pool.execute(query, [floorId]);
+      const [rows] = await this.db.execute(query, [floorId]);
       return rows[0] || null;
     } catch (error) {
       console.error('Error fetching lifter cell on floor:', error);
@@ -57,7 +66,7 @@ class LifterService {
         ORDER BY c.col, c.\`row\`
       `;
 
-      const [rows] = await pool.execute(query, [floorId]);
+      const [rows] = await this.db.execute(query, [floorId]);
       return rows;
     } catch (error) {
       console.error('Error fetching all lifter cells on floor:', error);
@@ -88,7 +97,7 @@ class LifterService {
         ORDER BY id
       `;
 
-      const [rows] = await pool.execute(query);
+      const [rows] = await this.db.execute(query);
       return rows;
     } catch (error) {
       console.error('Error fetching available lifters:', error);
@@ -115,7 +124,7 @@ class LifterService {
         ORDER BY c.floor_id
       `;
 
-      const [rows] = await pool.execute(query, [lifterId, ...floorIds]);
+      const [rows] = await this.db.execute(query, [lifterId, ...floorIds]);
 
       // Convert array to object { floor_id: cell_info }
       const result = {};
@@ -143,7 +152,7 @@ class LifterService {
         WHERE id = ?
       `;
 
-      const [rows] = await pool.execute(query, [lifterId]);
+      const [rows] = await this.db.execute(query, [lifterId]);
       return rows[0] || null;
     } catch (error) {
       console.error('Error fetching lifter by ID:', error);
@@ -421,4 +430,4 @@ class LifterService {
   }
 }
 
-module.exports = new LifterService();
+module.exports = LifterService;

@@ -1,10 +1,16 @@
-const pool = require('../config/database');
 const { logger } = require('../logger/logger');
 
 /**
  * Repository for all database interactions with the 'cells' table.
+ * Refactored to use Dependency Injection - tuân thủ Dependency Inversion Principle
  */
 class CellRepository {
+    /**
+     * @param {Object} dbConnection - Database connection instance (injected)
+     */
+    constructor(dbConnection) {
+        this.db = dbConnection;
+    }
 
     /**
      * Finds a batch of available 'endNode' cells, sorted by the spatial FIFO rule.
@@ -53,7 +59,7 @@ class CellRepository {
         params.push(pageSize, offset);
 
         try {
-            const [rows] = await pool.query(query, params);
+            const [rows] = await this.db.query(query, params);
             return rows;
         } catch (error) {
             logger.error('[CellRepository] Error fetching available end nodes:', error);
@@ -87,7 +93,7 @@ class CellRepository {
         params.push(cellId);
 
         try {
-            const [result] = await pool.query(query, params);
+            const [result] = await this.db.query(query, params);
             return result.affectedRows > 0;
         } catch (error) {
             logger.error(`[CellRepository] Error updating is_has_box for cell ID ${cellId}:`, error);
@@ -99,7 +105,7 @@ class CellRepository {
         const statusValue = isBlock ? 1 : 0;
         const query = 'UPDATE cells SET is_block = ? WHERE id = ?;';
         try {
-            const [result] = await pool.query(query, [statusValue, cellId]);
+            const [result] = await this.db.query(query, [statusValue, cellId]);
             return result.affectedRows > 0;
         } catch (error) {
             logger.error(`[CellRepository] Error updating is_block for cell ID ${cellId}:`, error);
@@ -110,7 +116,7 @@ class CellRepository {
     async getCellByName(cellName, floorId) {
         const query = 'SELECT * FROM cells WHERE name = ? AND floor_id = ?;';
         try {
-            const [rows] = await pool.query(query, [cellName, floorId]);
+            const [rows] = await this.db.query(query, [cellName, floorId]);
             return rows[0] || null;
         } catch (error) {
             logger.error(`[CellRepository] Error fetching cell by name ${cellName}:`, error);
@@ -121,7 +127,7 @@ class CellRepository {
     async getCellByNameAnyFloor(name) {
         const query = 'SELECT * FROM cells WHERE name = ?;';
         try {
-            const [rows] = await pool.query(query, [name]);
+            const [rows] = await this.db.query(query, [name]);
             return rows;
         } catch (error) {
             logger.error('[CellRepository] Error fetching cell by name (any floor):', error);
@@ -132,7 +138,7 @@ class CellRepository {
     async getCellByQrCode(qrCode, floorId) {
         const query = 'SELECT * FROM cells WHERE qr_code = ? AND floor_id = ?;';
         try {
-            const [rows] = await pool.query(query, [qrCode, floorId]);
+            const [rows] = await this.db.query(query, [qrCode, floorId]);
             return rows[0] || null;
         } catch (error) {
             logger.error(`[CellRepository] Error fetching cell by QR code ${qrCode}:`, error);
@@ -143,7 +149,7 @@ class CellRepository {
     async getCellByQrCodeAnyFloor(qrCode) {
         const query = 'SELECT * FROM cells WHERE qr_code = ?;';
         try {
-            const [rows] = await pool.query(query, [qrCode]);
+            const [rows] = await this.db.query(query, [qrCode]);
             return rows;
         } catch (error) {
             logger.error(`[CellRepository] Error fetching cell by QR code (any floor) for QR ${qrCode}:`, error);
@@ -154,7 +160,7 @@ class CellRepository {
     async getAllCellsByFloor(floorId) {
         const query = 'SELECT * FROM cells WHERE floor_id = ? ORDER BY `row`, col;';
         try {
-            const [rows] = await pool.query(query, [floorId]);
+            const [rows] = await this.db.query(query, [floorId]);
             return rows;
         } catch (error) {
             logger.error(`[CellRepository] Error fetching all cells by floor ${floorId}:`, error);
@@ -165,7 +171,7 @@ class CellRepository {
     async getCellByPosition(col, row, floorId) {
         const query = 'SELECT * FROM cells WHERE col = ? AND `row` = ? AND floor_id = ?;';
         try {
-            const [rows] = await pool.query(query, [col, row, floorId]);
+            const [rows] = await this.db.query(query, [col, row, floorId]);
             return rows[0] || null;
         } catch (error) {
             logger.error(`[CellRepository] Error fetching cell by position (${col},${row}) on floor ${floorId}:`, error);
@@ -181,7 +187,7 @@ class CellRepository {
         WHERE r.name = ? AND f.name = ?;
     `;
         try {
-            const [rows] = await pool.query(query, [rackName, floorName]);
+            const [rows] = await this.db.query(query, [rackName, floorName]);
             return rows[0] || null;
         } catch (error) {
             logger.error(`[CellRepository] Error fetching floor by rack '${rackName}' and floor '${floorName}':`, error);
@@ -197,7 +203,7 @@ class CellRepository {
       WHERE f.id = ?
     `;
         try {
-            const [rows] = await pool.query(query, [floorId]);
+            const [rows] = await this.db.query(query, [floorId]);
             return rows[0] || null;
         } catch (error) {
             logger.error(`[CellRepository] Error fetching floor by ID ${floorId}:`, error);
@@ -211,7 +217,7 @@ class CellRepository {
       WHERE \`col\` = ? AND \`row\` = ? AND floor_id = ?
       LIMIT 1;
     `;
-        const [rows] = await pool.query(query, [col, row, floorId]);
+        const [rows] = await this.db.query(query, [col, row, floorId]);
         return rows[0];
     }
 
@@ -221,7 +227,7 @@ class CellRepository {
       WHERE id = ? AND rack_id = ?
     `;
         try {
-            const [rows] = await pool.query(query, [floorId, rackId]);
+            const [rows] = await this.db.query(query, [floorId, rackId]);
             return rows.length > 0;
         } catch (error) {
             logger.error(`[CellRepository] Error validating rack ${rackId} and floor ${floorId}:`, error);
@@ -238,7 +244,7 @@ class CellRepository {
       WHERE c.qr_code = ? AND c.floor_id = ?
     `;
         try {
-            const [rows] = await pool.query(query, [qrCode, floorId]);
+            const [rows] = await this.db.query(query, [qrCode, floorId]);
             return rows[0] || null;
         } catch (error) {
             logger.error(`[CellRepository] Error fetching cell with names for QR ${qrCode}:`, error);
@@ -259,7 +265,7 @@ class CellRepository {
       LIMIT 1;
     `;
         try {
-            const [rows] = await pool.query(query, [qrCode]);
+            const [rows] = await this.db.query(query, [qrCode]);
             return rows[0] || null;
         } catch (error) {
             logger.error(`[CellRepository] Error fetching deep cell info for QR ${qrCode}:`, error);
@@ -299,7 +305,7 @@ class CellRepository {
         `;
 
         try {
-            const [allNodes] = await pool.query(query, params);
+            const [allNodes] = await this.db.query(query, params);
 
             if (!allNodes || allNodes.length === 0) {
                 return [];
@@ -332,7 +338,7 @@ class CellRepository {
         `;
 
         try {
-            const [rows] = await pool.query(query, [palletType, floorId, row]);
+            const [rows] = await this.db.query(query, [palletType, floorId, row]);
             return rows;
         } catch (error) {
             logger.error(`[CellRepository] Error getting available nodes in row ${row}:`, error);
@@ -356,7 +362,7 @@ class CellRepository {
         `;
 
         try {
-            const [rows] = await pool.query(query, [floorId, row]);
+            const [rows] = await this.db.query(query, [floorId, row]);
             return rows;
         } catch (error) {
             logger.error(`[CellRepository] Error getting cells in row ${row}:`, error);
@@ -378,7 +384,7 @@ class CellRepository {
         `;
 
         try {
-            const [result] = await pool.query(query, [data.item_ID || null, qrCode]);
+            const [result] = await this.db.query(query, [data.item_ID || null, qrCode]);
             return result.affectedRows > 0;
         } catch (error) {
             logger.error(`[CellRepository] Error updating node status for ${qrCode}:`, error);
@@ -399,7 +405,7 @@ class CellRepository {
             LIMIT 1;
         `;
         try {
-            const [rows] = await pool.query(query, [palletId, palletType]);
+            const [rows] = await this.db.query(query, [palletId, palletType]);
             return rows.length > 0;
         } catch (error) {
             logger.error(`[CellRepository] Error checking if pallet ID ${palletId} exists:`, error);
@@ -408,4 +414,4 @@ class CellRepository {
     }
 }
 
-module.exports = new CellRepository();
+module.exports = CellRepository;

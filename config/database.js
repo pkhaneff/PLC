@@ -1,24 +1,8 @@
-const mysql = require('mysql2/promise');
 
-const dbConfig = {
-  host: 'localhost',
-  user: 'root',
-  password: 'abcd1234',
-  database: 'wcs',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-};
+const { logger } = require('../logger/logger');
 
-const pool = mysql.createPool(dbConfig);
+logger.warn('[DEPRECATED] config/database.js is deprecated. Please use core/bootstrap.js instead.');
 
-pool.getConnection()
-  .then(connection => {
-    console.log('Database connected successfully');
-    connection.release();
-  })
-  .catch(err => {
-    console.error('Error connecting to database:', err.message);
-  });
+const bootstrap = require('../core/bootstrap');
 
-module.exports = pool;
+module.exports = bootstrap.db;

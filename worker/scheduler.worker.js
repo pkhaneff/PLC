@@ -1,5 +1,5 @@
 const { logger } = require('../logger/logger');
-const CellRepository = require('../repository/cell.repository');
+const { cellRepository: CellRepository } = require('../core/bootstrap');
 const redisClient = require('../redis/init.redis');
 const shuttleTaskQueueService = require('../modules/SHUTTLE/shuttleTaskQueueService');
 const ReservationService = require('../modules/COMMON/reservationService');

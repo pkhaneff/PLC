@@ -16,7 +16,7 @@ const COMPLETE_MISSION_TOPIC_PREFIX = 'shuttle/completeMission/';
 const EVENTS_TOPIC = 'shuttle/events';
 
 const SHUTTLE_CONFIGS = [
-    { code: '001', ip: '192.168.1.101', startQrCode: 'X0002Y0020' },
+    // { code: '001', ip: '192.168.1.101', startQrCode: 'X0002Y0020' },
     // { code: '002', ip: '192.168.1.102', startQrCode: 'X0003Y0001' },
     { code: '003', ip: '192.168.1.103', startQrCode: 'X0003Y0020' },
 ];
@@ -132,9 +132,13 @@ async function processMovement(state) {
 
             // Publish event AFTER updating state
             // CRITICAL: Extract taskId to top level so TaskEventListener can process it
+            // CRITICAL: Include isCarrying state so backend can determine correct next action
             publishEvent(arrivalEvent, state.no, {
                 taskId: state.taskInfo?.taskId,
-                meta: state.taskInfo
+                meta: {
+                    ...state.taskInfo,
+                    isCarrying: state.isCarrying
+                }
             });
         } else {
             console.warn(`[Simulator] Shuttle ${state.no} completed a path but had no onArrival event stored.`);
@@ -302,16 +306,27 @@ client.on('message', async (topic, message) => {
     // Handle shuttle/run/{code} topic
     if (topicType === 'run') {
         try {
-            const messageStr = message.toString();
-            // Parse JSON nếu message là JSON string, nếu không thì dùng trực tiếp
-            let runCommand;
+            const messageStr = message.toString().trim();
+
+            // Parse the run command value
+            let runValue;
             try {
-                runCommand = JSON.parse(messageStr); // Try parse JSON: "1" -> 1
+                // Try parse as JSON first (handles "1", "0", 1, 0)
+                const parsed = JSON.parse(messageStr);
+                runValue = typeof parsed === 'number' ? parsed : parseInt(parsed, 10);
             } catch {
-                runCommand = parseInt(messageStr, 10); // Fallback: parse as integer
+                // Fallback: parse as integer directly
+                runValue = parseInt(messageStr, 10);
             }
 
-            shuttle.runPermission = parseInt(runCommand, 10);
+            // Validate the parsed value
+            if (isNaN(runValue)) {
+                console.error(`[Simulator] Invalid run command for shuttle ${shuttleCode}: "${messageStr}" (parsed as NaN)`);
+                return;
+            }
+
+            // Ensure value is 0 or 1
+            shuttle.runPermission = runValue === 1 ? 1 : 0;
             console.log(`[Simulator] Shuttle ${shuttleCode} run permission set to: ${shuttle.runPermission} (${shuttle.runPermission === 1 ? 'ALLOWED' : 'NOT ALLOWED'})`);
             publishEvent('shuttle-run-permission-changed', shuttle.no, { runPermission: shuttle.runPermission });
             return;

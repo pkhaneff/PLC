@@ -1,10 +1,11 @@
-const CellRepository = require('../../repository/cell.repository');
+const { cellRepository: CellRepository } = require('../../core/bootstrap');
 const { logger } = require('../../logger/logger');
 
 /**
  * Service layer for cell-related business logic.
  * Decouples controllers and other services from the database repository.
  * All data access is delegated to the CellRepository.
+ * Refactored to use DI - CellRepository is now injected via bootstrap
  */
 class CellService {
   constructor() {
