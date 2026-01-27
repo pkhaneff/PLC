@@ -1,10 +1,10 @@
-const { logger } = require('../../logger/logger');
+const { logger } = require('../../../logger/logger');
 const PriorityCalculationService = require('./PriorityCalculationService');
 const ParkingNodeService = require('./ParkingNodeService');
 const BacktrackService = require('./BacktrackService');
 const RerouteService = require('./RerouteService');
 const { getShuttleState } = require('./shuttleStateCache');
-const redisClient = require('../../redis/init.redis');
+const redisClient = require('../../../redis/init.redis');
 const PathCacheService = require('./PathCacheService');
 
 class ConflictResolutionService {
@@ -133,7 +133,7 @@ class ConflictResolutionService {
         return await this.useBacktrackStrategy(shuttleId, conflict, floorId);
       }
 
-      const mqttService = require('../../services/mqttClientService');
+      const mqttService = require('../../../services/mqttClientService');
       const commandTopic = `shuttle/handle/${shuttleId}`;
       const commandPayload = {
         action: 'MOVE_TO_PARKING',

@@ -1,7 +1,7 @@
-const { logger } = require('../../logger/logger');
+const { logger } = require('../../../logger/logger');
 const { getAllShuttleStates } = require('./shuttleStateCache');
-const redisClient = require('../../redis/init.redis');
-const { SHUTTLE_STATUS } = require('../../config/shuttle.config');
+const redisClient = require('../../../redis/init.redis');
+const { SHUTTLE_STATUS } = require('../../../config/shuttle.config');
 
 /**
  * Service để đếm số lượng shuttle đang active (không IDLE)

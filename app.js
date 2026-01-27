@@ -9,10 +9,10 @@ const plcManager = require('./modules/PLC/plcManager');
 const { plcsConfig } = require('./modules/PLC/configPLC');
 const healthController = require('./controllers/health.controller');
 const { logger } = require('./logger/logger.js');
-const shuttleDispatcherService = require('./modules/SHUTTLE/shuttleDispatcherService');
-const taskEventListener = require('./modules/SHUTTLE/taskEventListener');
+const shuttleDispatcherService = require('./modules/SHUTTLE/services/shuttleDispatcherService');
+const taskEventListener = require('./modules/SHUTTLE/services/TaskEventListener');
 const { initializeMqttClient } = require('./services/mqttClientService');
-const PathCacheService = require('./modules/SHUTTLE/PathCacheService');
+const PathCacheService = require('./modules/SHUTTLE/services/PathCacheService');
 
 const app = express();
 const server = http.createServer(app);

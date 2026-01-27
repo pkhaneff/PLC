@@ -1,5 +1,5 @@
-const redisClient = require('../../redis/init.redis');
-const { logger } = require('../../logger/logger');
+const redisClient = require('../../../redis/init.redis');
+const { logger } = require('../../../logger/logger');
 
 const ACTIVE_PATH_PREFIX = 'shuttle:active_path';
 const PATH_METADATA_PREFIX = 'shuttle:path_metadata';

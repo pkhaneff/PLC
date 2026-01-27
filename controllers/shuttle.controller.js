@@ -1,13 +1,13 @@
 const { logger } = require('../logger/logger');
 const { asyncHandler } = require('../middlewares/error.middleware');
-const cellService = require('../modules/SHUTTLE/cellService');
-const shuttleTaskQueueService = require('../modules/SHUTTLE/shuttleTaskQueueService');
+const cellService = require('../modules/SHUTTLE/services/cellService');
+const shuttleTaskQueueService = require('../modules/SHUTTLE/services/shuttleTaskQueueService');
 const redisClient = require('../redis/init.redis');
-const { findShortestPath } = require('../modules/SHUTTLE/pathfinding');
-const { getShuttleState } = require('../modules/SHUTTLE/shuttleStateCache');
+const { findShortestPath } = require('../modules/SHUTTLE/services/pathfinding');
+const { getShuttleState } = require('../modules/SHUTTLE/services/shuttleStateCache');
 const shuttleConfig = require('../config/shuttle.config');
 const { cellRepository: CellRepository } = require('../core/bootstrap');
-const shuttleDispatcherService = require('../modules/SHUTTLE/shuttleDispatcherService');
+const shuttleDispatcherService = require('../modules/SHUTTLE/services/shuttleDispatcherService');
 const { publishToTopic } = require('../services/mqttClientService');
 
 const TASK_STAGING_QUEUE_KEY = 'task:staging_queue';
@@ -25,12 +25,12 @@ class ShuttleController {
     return listNode;
   };
 
-  findPathCrossFloor = async (start, end, start_floor_id, end_floor_id, lifter_id) => {};
+  findPathCrossFloor = async (start, end, start_floor_id, end_floor_id, lifter_id) => { };
 
-  nodeFinding = asyncHandler(async (req, res) => {});
+  nodeFinding = asyncHandler(async (req, res) => { });
 
-  registerShuttle = asyncHandler(async (req, res) => {});
-  updatePosition = asyncHandler(async (req, res) => {});
+  registerShuttle = asyncHandler(async (req, res) => { });
+  updatePosition = asyncHandler(async (req, res) => { });
 
   /**
    * Kiểm tra xem ID pallet cùng loại đã tồn tại trong hệ thống chưa (hàng đợi hoặc đang xử lý)
@@ -201,7 +201,7 @@ class ShuttleController {
     }
 
     // 3. Thêm shuttle vào executing mode (để tự động lấy tasks tiếp theo)
-    const ExecutingModeService = require('../modules/SHUTTLE/ExecutingModeService');
+    const ExecutingModeService = require('../modules/SHUTTLE/services/ExecutingModeService');
     await ExecutingModeService.addShuttle(shuttle_code);
     logger.info(`[Controller] Shuttle ${shuttle_code} entered executing mode`);
 
@@ -488,7 +488,7 @@ class ShuttleController {
    */
   autoProcessInboundQueue = async (shuttleId = null) => {
     try {
-      const ExecutingModeService = require('../modules/SHUTTLE/ExecutingModeService');
+      const ExecutingModeService = require('../modules/SHUTTLE/services/ExecutingModeService');
 
       // 1. Kiểm tra queue có item không
       const queueLength = await redisClient.lLen(INBOUND_PALLET_QUEUE_KEY);
@@ -498,7 +498,7 @@ class ShuttleController {
       }
 
       // 2. Tìm shuttle IDLE trong executing mode
-      const { getAllShuttleStates } = require('../modules/SHUTTLE/shuttleStateCache');
+      const { getAllShuttleStates } = require('../modules/SHUTTLE/services/shuttleStateCache');
       const allShuttles = await getAllShuttleStates();
       const executingShuttles = await ExecutingModeService.getExecutingShuttles();
 
@@ -651,7 +651,7 @@ class ShuttleController {
       });
     }
 
-    const ExecutingModeService = require('../modules/SHUTTLE/ExecutingModeService');
+    const ExecutingModeService = require('../modules/SHUTTLE/services/ExecutingModeService');
     const wasExecuting = await ExecutingModeService.isShuttleExecuting(shuttle_code);
 
     if (!wasExecuting) {
@@ -674,7 +674,7 @@ class ShuttleController {
    * API để lấy danh sách shuttles đang trong executing mode
    */
   getExecutingShuttles = asyncHandler(async (req, res) => {
-    const ExecutingModeService = require('../modules/SHUTTLE/ExecutingModeService');
+    const ExecutingModeService = require('../modules/SHUTTLE/services/ExecutingModeService');
     const shuttles = await ExecutingModeService.getExecutingShuttles();
     const count = shuttles.length;
 

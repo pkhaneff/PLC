@@ -1,7 +1,7 @@
 // modules/SHUTTLE/shuttleStateCache.js
 
-const { logger } = require('../../logger/logger');
-const redisClient = require('../../redis/init.redis');
+const { logger } = require('../../../logger/logger');
+const redisClient = require('../../../redis/init.redis');
 
 const SHUTTLE_STATE_PREFIX = 'shuttle:state:';
 const SHUTTLE_STATE_TTL = 5; // 5 seconds TTL - auto cleanup if shuttle disconnects

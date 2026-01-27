@@ -1,6 +1,6 @@
-const { logger } = require('../../logger/logger');
+const { logger } = require('../../../logger/logger');
 const cellService = require('./cellService');
-const { TASK_ACTIONS } = require('../../config/shuttle.config');
+const { TASK_ACTIONS } = require('../../../config/shuttle.config');
 
 // Old findShortestPath removed. New implementation finds path between two QR codes.
 

@@ -1,5 +1,5 @@
 const mqtt = require('mqtt');
-const cellService = require('./modules/SHUTTLE/cellService');
+const cellService = require('./modules/SHUTTLE/services/cellService');
 const { SHUTTLE_STATUS, TASK_ACTIONS, MQTT_TOPICS, MISSION_CONFIG } = require('./config/shuttle.config');
 
 // --- Config ---

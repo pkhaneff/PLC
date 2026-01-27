@@ -1,11 +1,11 @@
-const { logger } = require('../../logger/logger');
+const { logger } = require('../../../logger/logger');
 const { findShortestPath } = require('./pathfinding');
 const { getShuttleState } = require('./shuttleStateCache');
 const cellService = require('./cellService');
-const { lifterService } = require('../../core/bootstrap');
+const { lifterService } = require('../../../core/bootstrap');
 const NodeOccupationService = require('./NodeOccupationService');
 const PathCacheService = require('./PathCacheService');
-const { TASK_ACTIONS } = require('../../config/shuttle.config');
+const { TASK_ACTIONS } = require('../../../config/shuttle.config');
 
 class MissionCoordinatorService {
   /**
@@ -129,7 +129,7 @@ class MissionCoordinatorService {
 
         if (lifterIndex !== -1) {
           // Path crosses Lifter Node
-          const LifterCoordinationService = require('../Lifter/LifterCoordinationService');
+          const LifterCoordinationService = require('../../Lifter/LifterCoordinationService');
           const lifterStatus = await LifterCoordinationService.getLifterStatus();
 
           // Check if we need to wait

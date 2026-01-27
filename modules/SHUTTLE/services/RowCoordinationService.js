@@ -1,5 +1,5 @@
-const { logger } = require('../../logger/logger');
-const redisClient = require('../../redis/init.redis');
+const { logger } = require('../../../logger/logger');
+const redisClient = require('../../../redis/init.redis');
 const cellService = require('./cellService');
 
 class RowCoordinationService {
@@ -92,7 +92,7 @@ class RowCoordinationService {
         return null;
       }
 
-      const CellRepository = require('../../repository/cell.repository');
+      const CellRepository = require('../../../repository/cell.repository');
       const rowCells = await CellRepository.getCellsByRow(assignedRow, floorId);
 
       if (!rowCells || rowCells.length === 0) {

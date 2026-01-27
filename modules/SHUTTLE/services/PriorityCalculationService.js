@@ -1,5 +1,5 @@
-const { logger } = require('../../logger/logger');
-const redisClient = require('../../redis/init.redis');
+const { logger } = require('../../../logger/logger');
+const redisClient = require('../../../redis/init.redis');
 const { getShuttleState } = require('./shuttleStateCache');
 
 /**

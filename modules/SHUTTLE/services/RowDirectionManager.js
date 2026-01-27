@@ -1,5 +1,5 @@
-const { logger } = require('../../logger/logger');
-const redisClient = require('../../redis/init.redis');
+const { logger } = require('../../../logger/logger');
+const redisClient = require('../../../redis/init.redis');
 
 /**
  * Direction codes for one-way traffic in rows

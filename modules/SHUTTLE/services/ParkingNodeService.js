@@ -1,9 +1,9 @@
-const { logger } = require('../../logger/logger');
+const { logger } = require('../../../logger/logger');
 const cellService = require('./cellService');
 const { findShortestPath } = require('./pathfinding');
 const { getAllShuttleStates } = require('./shuttleStateCache');
-const ReservationService = require('../COMMON/reservationService');
-const redisClient = require('../../redis/init.redis');
+const ReservationService = require('../../COMMON/reservationService');
+const redisClient = require('../../../redis/init.redis');
 
 /**
  * Service for managing parking nodes in conflict resolution.

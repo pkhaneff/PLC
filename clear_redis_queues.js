@@ -1,4 +1,4 @@
-const shuttleTaskQueueService = require('./modules/SHUTTLE/shuttleTaskQueueService');
+const shuttleTaskQueueService = require('./modules/SHUTTLE/services/shuttleTaskQueueService');
 const redisClient = require('./redis/init.redis');
 const { logger } = require('./logger/logger'); // Import logger
 

@@ -1,7 +1,7 @@
 const aedes = require('aedes')();
 const net = require('net');
 const { logger } = require('../logger/logger');
-const { updateShuttleState } = require('../modules/SHUTTLE/shuttleStateCache');
+const { updateShuttleState } = require('../modules/SHUTTLE/services/shuttleStateCache');
 
 const MQTT_PORT = process.env.MQTT_PORT || 1883;
 
