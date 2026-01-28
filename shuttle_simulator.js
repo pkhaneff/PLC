@@ -338,7 +338,7 @@ client.on('message', async (topic, message) => {
   try {
     const command = JSON.parse(message.toString());
 
-    if (topicType === 'handle' && command.totalStep) {
+    if (topicType === 'handle' && (command.totalStep !== undefined)) {
       console.log(`[Simulator] Shuttle ${shuttleCode} received handle command with ${command.totalStep} steps`);
 
       // Publish to shuttle/report/{code} to acknowledge receipt
@@ -397,8 +397,22 @@ client.on('message', async (topic, message) => {
         shuttle.currentStep = 0;
         shuttle.qrCode = newPath[0].qrCode; // Start at first node
         shuttle.shuttleStatus = SHUTTLE_STATUS.NORMAL_SPEED;
-        // commandComplete already set to IN_PROGRESS above for immediate ACK
         shuttle.lastMoveTimestamp = Date.now();
+      } else {
+        // Handle 0-step mission (immediate arrival at current position)
+        const onArrival = command.meta?.onArrival;
+        const taskInfo = command.meta || {};
+
+        console.log(`[Simulator] Shuttle ${shuttleCode} received 0-step mission. Firing event: ${onArrival}`);
+
+        if (onArrival) {
+          publishEvent(onArrival, shuttle.no, {
+            taskId: taskInfo.taskId,
+            meta: taskInfo,
+          });
+        }
+        shuttle.commandComplete = COMMAND_COMPLETE.DONE;
+        shuttle.shuttleStatus = SHUTTLE_STATUS.IDLE;
       }
     } else {
       console.warn(`[Simulator] Shuttle ${shuttleCode} received invalid message format.`, command);

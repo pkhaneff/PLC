@@ -87,6 +87,16 @@ class LifterEventHandler {
                 `[LifterEventHandler] Lifter reached floor ${finalTargetFloorId}. Shuttle ${shuttleId} recalculating final leg.`
             );
 
+            // SYNC REDIS STATUS: Crucial for lookahead system
+            const LIFTER_STATUS_KEY = 'lifter:status';
+            await redisClient.hSet(LIFTER_STATUS_KEY, {
+                status: 'IDLE',
+                currentFloor: finalTargetFloorId,
+                targetFloor: '',
+                assignedTo: '',
+            });
+            logger.debug(`[LifterEventHandler] Synced Redis Lifter status to F${finalTargetFloorId}`);
+
             const targetArrivalEvent = isCarrying ? 'TASK_COMPLETE' : 'PICKUP_COMPLETE';
             const targetAction = isCarrying ? TASK_ACTIONS.DROP_OFF : TASK_ACTIONS.PICK_UP;
 

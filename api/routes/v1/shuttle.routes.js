@@ -11,6 +11,7 @@ router.post('/auto-mode', shuttleController.autoMode);
 
 router.post('/pallet-inbound', shuttleController.registerInbound);
 router.post('/execute-storage', shuttleController.executeStorageTask);
+router.post('/execute-outbound', shuttleController.executeOutbound);
 router.post('/stop-executing', shuttleController.stopExecutingMode);
 router.get('/executing-shuttles', shuttleController.getExecutingShuttles);
 

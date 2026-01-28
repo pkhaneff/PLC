@@ -6,6 +6,7 @@ const ConflictResolutionService = require('./ConflictResolutionService');
 const LifterEventHandler = require('./LifterEventHandler');
 const MovementEventHandler = require('./MovementEventHandler');
 const InboundTaskHandler = require('../IN/InboundTaskHandler');
+const OutboundTaskHandler = require('../OUT/OutboundTaskHandler');
 
 const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || 'mqtt://10.14.80.78:1883';
 const MQTT_USERNAME = process.env.MQTT_USERNAME || 'admin';
@@ -84,7 +85,16 @@ class TaskEventListener {
                     break;
 
                 case 'PICKUP_COMPLETE':
-                    if (taskId) await InboundTaskHandler.handlePickupComplete(taskId, shuttleId, this.dispatcher);
+                    if (taskId) {
+                        const taskDetails = await shuttleTaskQueueService.getTaskDetails(taskId);
+                        const taskType = taskDetails?.taskType || 'inbound';
+
+                        if (taskType === 'outbound') {
+                            await OutboundTaskHandler.handlePickupComplete(taskId, shuttleId, this.dispatcher);
+                        } else {
+                            await InboundTaskHandler.handlePickupComplete(taskId, shuttleId, this.dispatcher);
+                        }
+                    }
                     break;
 
                 case 'ARRIVED_AT_LIFTER':
@@ -92,7 +102,16 @@ class TaskEventListener {
                     break;
 
                 case 'TASK_COMPLETE':
-                    if (taskId) await InboundTaskHandler.handleTaskComplete(taskId, shuttleId, this.dispatcher);
+                    if (taskId) {
+                        const taskDetails = await shuttleTaskQueueService.getTaskDetails(taskId);
+                        const taskType = taskDetails?.taskType || 'inbound';
+
+                        if (taskType === 'outbound') {
+                            await OutboundTaskHandler.handleTaskComplete(taskId, shuttleId, this.dispatcher);
+                        } else {
+                            await InboundTaskHandler.handleTaskComplete(taskId, shuttleId, this.dispatcher);
+                        }
+                    }
                     break;
 
                 case 'shuttle-waiting':

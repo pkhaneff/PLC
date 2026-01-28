@@ -721,6 +721,129 @@ class ShuttleController {
       message: `Shuttle ${shuttle_code} run permission set to ${runValue} (${runValue === 1 ? 'ALLOWED' : 'NOT ALLOWED'})`,
     });
   });
+
+  /**
+   * Giai đoạn xuất hàng: Kích hoạt nhiệm vụ xuất kho cho một shuttle cụ thể
+   * POST /api/v1/shuttle/execute-outbound
+   * Body: { rackId, palletType, shuttle_code, quantity, outNodeQr }
+   */
+  executeOutbound = asyncHandler(async (req, res) => {
+    const { rackId, palletType, shuttle_code, quantity = 1, outNodeQr } = req.body;
+
+    // 1. Validate input
+    if (!rackId || !palletType || !shuttle_code || !outNodeQr) {
+      return res.status(400).json({
+        success: false,
+        error: 'Thiếu rackId, palletType, shuttle_code hoặc outNodeQr',
+      });
+    }
+
+    // 2. Kiểm tra trạng thái shuttle
+    const shuttleState = await getShuttleState(shuttle_code);
+
+    if (!shuttleState) {
+      return res.status(404).json({
+        success: false,
+        error: `Không tìm thấy thông tin shuttle ${shuttle_code}`,
+      });
+    }
+
+    if (shuttleState.shuttleStatus !== 8) {
+      // 8 = IDLE
+      return res.status(400).json({
+        success: false,
+        error: `Shuttle ${shuttle_code} đang bận (status: ${shuttleState.shuttleStatus})`,
+      });
+    }
+
+    try {
+      // 3. Verify outNodeQr tồn tại trong database
+      const outNodeCell = await cellService.getCellDeepInfoByQr(outNodeQr);
+      if (!outNodeCell) {
+        return res.status(400).json({
+          success: false,
+          error: `OutNode ${outNodeQr} không tồn tại trong database`,
+        });
+      }
+
+      const outNodeFloorId = outNodeCell.floor_id;
+
+      // 4. Tìm node có hàng theo FIFO
+      const occupiedNodes = await CellRepository.findOccupiedNodesByFIFO(palletType, rackId);
+
+      if (!occupiedNodes || occupiedNodes.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: `Không tìm thấy hàng loại ${palletType} trong kho (rack ${rackId})`,
+        });
+      }
+
+      // 5. Chọn node đầu tiên làm pickup node
+      const pickupNode = occupiedNodes[0];
+      const pickupNodeQr = pickupNode.qr_code;
+      const pickupNodeFloorId = pickupNode.floor_id;
+      const palletId = pickupNode.pallet_id || 'UNKNOWN';
+
+      logger.info(
+        `[Controller] Outbound: Found pickup node ${pickupNodeQr} with pallet ${palletId} for shuttle ${shuttle_code}`
+      );
+
+      // 6. Thêm shuttle vào executing mode
+      const ExecutingModeService = require('../modules/SHUTTLE/services/ExecutingModeService');
+      await ExecutingModeService.addShuttle(shuttle_code);
+      logger.info(`[Controller] Shuttle ${shuttle_code} entered executing mode for outbound`);
+
+      // 7. Tạo task object
+      const taskId = `out_${Date.now()}_${shuttle_code}`;
+      const taskData = {
+        taskId: taskId,
+        taskType: 'outbound',
+        pickupNodeQr: pickupNodeQr,
+        pickupNodeFloorId: pickupNodeFloorId,
+        endNodeQr: outNodeQr,
+        endNodeFloorId: outNodeFloorId,
+        palletType: palletType,
+        itemInfo: palletId,
+        assignedShuttleId: shuttle_code,
+        status: 'pending',
+        timestamp: Date.now(),
+      };
+
+      // 8. Lưu chi tiết task vào Redis
+      const taskDetailsToSave = { ...taskData };
+      if (taskDetailsToSave.itemInfo && typeof taskDetailsToSave.itemInfo === 'object') {
+        taskDetailsToSave.itemInfo = JSON.stringify(taskDetailsToSave.itemInfo);
+      }
+      await redisClient.hSet(shuttleTaskQueueService.getTaskKey(taskId), taskDetailsToSave);
+
+      // 9. Gửi quyền chạy cho shuttle
+      const runTopic = `shuttle/run/${shuttle_code}`;
+      publishToTopic(runTopic, '1');
+      logger.info(`[Controller] Sent run permission to shuttle ${shuttle_code} for outbound`);
+
+      // 10. Dispatch task
+      const dispatcher = new shuttleDispatcherService(req.app.get('io'));
+      await dispatcher.dispatchTaskToShuttle(taskData, shuttle_code);
+      logger.info(`[Controller] Dispatched outbound task ${taskId} to shuttle ${shuttle_code}`);
+
+      return res.status(200).json({
+        success: true,
+        message: `Đã gán nhiệm vụ xuất hàng cho shuttle ${shuttle_code}`,
+        data: {
+          taskId: taskId,
+          palletId: palletId,
+          pickupNode: pickupNodeQr,
+          destination: outNodeQr,
+        },
+      });
+    } catch (error) {
+      logger.error(`[Controller] Error executing outbound task: ${error.message}`);
+      return res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  });
 }
 
 module.exports = new ShuttleController();

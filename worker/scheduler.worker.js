@@ -1,11 +1,11 @@
 const { logger } = require('../logger/logger');
 const { cellRepository: CellRepository } = require('../core/bootstrap');
 const redisClient = require('../redis/init.redis');
-const shuttleTaskQueueService = require('../modules/SHUTTLE/shuttleTaskQueueService');
+const shuttleTaskQueueService = require('../modules/SHUTTLE/services/shuttleTaskQueueService');
 const ReservationService = require('../modules/COMMON/reservationService');
-const cellService = require('../modules/SHUTTLE/cellService');
-const ShuttleCounterService = require('../modules/SHUTTLE/ShuttleCounterService');
-const RowCoordinationService = require('../modules/SHUTTLE/RowCoordinationService');
+const cellService = require('../modules/SHUTTLE/services/cellService');
+const ShuttleCounterService = require('../modules/SHUTTLE/services/ShuttleCounterService');
+const RowCoordinationService = require('../modules/SHUTTLE/services/RowCoordinationService');
 
 const SCHEDULER_INTERVAL = 5000;
 const ENDNODE_PAGE_SIZE = 10;

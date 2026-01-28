@@ -1,6 +1,6 @@
 const redisClient = require('../../redis/init.redis');
 const { logger } = require('../../logger/logger');
-const lifterService = require('./lifterService');
+const { lifterService } = require('../../core/bootstrap');
 
 const LIFTER_QUEUE_KEY = 'lifter:coordinated_queue';
 const LIFTER_STATUS_KEY = 'lifter:status';
@@ -123,6 +123,28 @@ class LifterCoordinationService {
    */
   async getLifterStatus() {
     let status = await redisClient.hGetAll(LIFTER_STATUS_KEY);
+
+    // --- NEW: Physical Verification ---
+    // If status is IDLE, verify with actual PLC sensors to ensure Redis isn't out of sync
+    if (status && status.status !== 'MOVING') {
+      try {
+        const plcManager = require('../PLC/plcManager');
+        const posF1 = plcManager.getValue('PLC_1', 'LIFTER_1_POS_F1');
+        const posF2 = plcManager.getValue('PLC_1', 'LIFTER_1_POS_F2');
+
+        const physicalFloor = posF1 ? 138 : posF2 ? 139 : null;
+
+        if (physicalFloor && String(status.currentFloor) !== String(physicalFloor)) {
+          logger.warn(
+            `[LifterCoordination] Drift detected! Redis: F${status.currentFloor}, PLC: F${physicalFloor}. Correcting...`
+          );
+          status.currentFloor = physicalFloor;
+          await redisClient.hSet(LIFTER_STATUS_KEY, 'currentFloor', physicalFloor);
+        }
+      } catch (e) {
+        logger.debug(`[LifterCoordination] Verify PLC failed (expected during startup): ${e.message}`);
+      }
+    }
 
     // If Redis is empty or missing critical fields, try to init from real state
     if (!status || !status.currentFloor) {

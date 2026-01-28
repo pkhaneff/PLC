@@ -46,7 +46,7 @@ class MissionCoordinatorService {
       let onArrival = options.onArrival || 'TASK_COMPLETE';
       let lastStepAction =
         options.action || (onArrival === 'PICKUP_COMPLETE' ? TASK_ACTIONS.PICK_UP : TASK_ACTIONS.DROP_OFF);
-      let isCrossFloor = currentFloorId !== finalTargetFloorId;
+      let isCrossFloor = Number(currentFloorId) !== Number(finalTargetFloorId);
 
       // --- LOGIC DI CHUYỂN KHÁC TẦNG ---
       if (isCrossFloor) {

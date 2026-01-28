@@ -13,61 +13,6 @@ class CellRepository {
   }
 
   /**
-   * Finds a batch of available 'endNode' cells, sorted by the spatial FIFO rule.
-   * An available cell is one that is not blocked and does not contain a box.
-   *
-   * Spatial FIFO order: by floor (bottom to top), then by row, then by column.
-   *
-   * @param {number} page - The page number to retrieve (1-indexed).
-   * @param {number} pageSize - The number of records per page.
-   * @param {string} palletType - (Optional) The pallet classification to filter by.
-   * @param {number} floorId - (Optional) The floor ID to filter by.
-   * @returns {Promise<Array>} A promise that resolves to an array of cell records.
-   */
-  async getAvailableEndNodes(page = 1, pageSize = 10, palletType = null, floorId = null) {
-    const offset = (page - 1) * pageSize;
-    let query = `
-      SELECT *
-      FROM cells
-      WHERE 
-        is_block = 0 
-        AND is_has_box = 0
-        AND cell_type = 'storage'
-    `;
-
-    const params = [];
-
-    if (palletType) {
-      query += ` AND pallet_classification = ? `;
-      params.push(palletType);
-    }
-
-    if (floorId) {
-      query += ` AND floor_id = ? `;
-      params.push(floorId);
-    }
-
-    query += `
-      ORDER BY 
-        floor_id ASC, 
-        \`row\` ASC, 
-        col ASC
-      LIMIT ?
-      OFFSET ?;
-    `;
-
-    params.push(pageSize, offset);
-
-    try {
-      const [rows] = await this.db.query(query, params);
-      return rows;
-    } catch (error) {
-      logger.error('[CellRepository] Error fetching available end nodes:', error);
-      throw error;
-    }
-  }
-
-  /**
    * Updates the 'is_has_box' status for a given cell.
    *
    * @param {number} cellId - The ID of the cell to update.
@@ -341,6 +286,66 @@ class CellRepository {
       return rows;
     } catch (error) {
       logger.error(`[CellRepository] Error getting available nodes in row ${row}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Tìm row đầu tiên (theo FIFO) có node chứa hàng, trả về TẤT CẢ node có hàng trong row đó
+   * FIFO order cho OUTBOUND: floor ASC, row ASC, col ASC
+   * @param {string} palletType - Loại pallet
+   * @param {number} rackId - Rack ID (optional)
+   * @param {number} floorId - Floor ID (optional)
+   * @returns {Promise<Array>} Danh sách tất cả node có hàng trong row đầu tiên
+   */
+  async findOccupiedNodesByFIFO(palletType, rackId = null, floorId = null) {
+    let query = `
+            SELECT c.*
+            FROM cells c
+            JOIN rack_floors f ON c.floor_id = f.id
+            WHERE c.pallet_classification = ?
+              AND c.is_has_box = 1
+              AND c.is_block = 0
+              AND c.cell_type = 'storage'
+        `;
+
+    const params = [palletType];
+
+    if (rackId) {
+      query += ` AND f.rack_id = ? `;
+      params.push(rackId);
+    }
+
+    if (floorId) {
+      query += ` AND c.floor_id = ? `;
+      params.push(floorId);
+    }
+
+    query += `
+            ORDER BY
+              c.floor_id ASC,
+              c.\`row\` ASC,
+              c.col ASC
+        `;
+
+    try {
+      const [allNodes] = await this.db.query(query, params);
+
+      if (!allNodes || allNodes.length === 0) {
+        return [];
+      }
+
+      const firstRow = allNodes[0].row;
+      const firstFloor = allNodes[0].floor_id;
+
+      const nodesInFirstRow = allNodes.filter((n) => n.row === firstRow && n.floor_id === firstFloor);
+
+      logger.info(
+        `[CellRepository] Found ${nodesInFirstRow.length} occupied nodes in row ${firstRow} (floor ${firstFloor}, pallet ${palletType})`
+      );
+      return nodesInFirstRow;
+    } catch (error) {
+      logger.error('[CellRepository] Error finding occupied nodes by FIFO:', error);
       throw error;
     }
   }
