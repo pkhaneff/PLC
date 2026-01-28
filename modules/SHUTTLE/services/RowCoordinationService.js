@@ -104,7 +104,9 @@ class RowCoordinationService {
       let nearestCell = null;
 
       for (const cell of rowCells) {
-        if (cell.is_block === 1) continue;
+        if (cell.is_block === 1) {
+          continue;
+        }
 
         const distance = Math.abs(cell.col - currentCell.col) + Math.abs(cell.row - currentCell.row);
         if (distance < minDistance) {

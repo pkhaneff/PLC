@@ -49,10 +49,18 @@ function calculateDirection(fromCell, toCell) {
   const colDiff = toCell.col - fromCell.col;
   const rowDiff = toCell.row - fromCell.row;
 
-  if (rowDiff < 0) return 1;
-  if (colDiff > 0) return 2;
-  if (rowDiff > 0) return 3;
-  if (colDiff < 0) return 4;
+  if (rowDiff < 0) {
+    return 1;
+  }
+  if (colDiff > 0) {
+    return 2;
+  }
+  if (rowDiff > 0) {
+    return 3;
+  }
+  if (colDiff < 0) {
+    return 4;
+  }
 
   return 1;
 }
@@ -144,7 +152,7 @@ async function findShortestPathByCellAsync(startCell, endCell, floorId, options 
       currentCell,
       floorId,
       endCell.qr_code,
-      options
+      options,
     );
 
     for (const neighborData of validNeighbors) {
@@ -217,10 +225,12 @@ async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options =
       }
 
       // Logic for blocking based on isShuttleCarrying and is_has_box
-      if (isShuttleCarrying &&
+      if (
+        isShuttleCarrying &&
         neighborCell.is_has_box === 1 &&
         neighborCell.qr_code !== targetQr &&
-        (!options.ignoreBoxOnNodes || !options.ignoreBoxOnNodes.includes(neighborCell.qr_code))) {
+        (!options.ignoreBoxOnNodes || !options.ignoreBoxOnNodes.includes(neighborCell.qr_code))
+      ) {
         continue; // Block if loaded shuttle and neighbor has box (not target and not ignored)
       }
 
@@ -240,7 +250,7 @@ async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options =
             if (colDiff < 0) {
               // Moving to lower col (left) - VIOLATION
               logger.debug(
-                `[Pathfinding] Skipping ${neighborCell.qr_code}: violates LEFT_TO_RIGHT (col ${cell.col} → ${neighborCell.col})`
+                `[Pathfinding] Skipping ${neighborCell.qr_code}: violates LEFT_TO_RIGHT (col ${cell.col} → ${neighborCell.col})`,
               );
               continue;
             }
@@ -249,7 +259,7 @@ async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options =
             if (colDiff > 0) {
               // Moving to higher col (right) - VIOLATION
               logger.debug(
-                `[Pathfinding] Skipping ${neighborCell.qr_code}: violates RIGHT_TO_LEFT (col ${cell.col} → ${neighborCell.col})`
+                `[Pathfinding] Skipping ${neighborCell.qr_code}: violates RIGHT_TO_LEFT (col ${cell.col} → ${neighborCell.col})`,
               );
               continue;
             }
@@ -294,7 +304,7 @@ async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options =
               }
 
               logger.debug(
-                `[Pathfinding] High penalty for ${neighborCell.qr_code}: going ${dir} against ${trafficShuttle.shuttleId}'s direction ${trafficDirection} (carrying: ${otherShuttleMetadata.isCarrying})`
+                `[Pathfinding] High penalty for ${neighborCell.qr_code}: going ${dir} against ${trafficShuttle.shuttleId}'s direction ${trafficDirection} (carrying: ${otherShuttleMetadata.isCarrying})`,
               );
             } else if (trafficDirection && dir === trafficDirection) {
               // Going with traffic - small congestion penalty
@@ -332,7 +342,7 @@ async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options =
               // Going against dominant corridor flow - VERY HIGH penalty
               corridorPenalty = corridor.isHighTraffic ? 250 : 180;
               logger.debug(
-                `[Pathfinding] Corridor penalty for ${neighborCell.qr_code}: going against ${corridor.shuttleCount}-shuttle corridor (dominant dir: ${corridor.dominantDirection})`
+                `[Pathfinding] Corridor penalty for ${neighborCell.qr_code}: going against ${corridor.shuttleCount}-shuttle corridor (dominant dir: ${corridor.dominantDirection})`,
               );
             } else if (corridor.dominantDirection === numericDir) {
               // Going with corridor flow - small penalty for congestion
@@ -357,17 +367,27 @@ async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options =
 }
 
 function parseDirectionType(directionType) {
-  if (!directionType) return [];
+  if (!directionType) {
+    return [];
+  }
 
   const directions = [];
 
   // Support both "up,down,left,right" and "up_down_and_left" formats
   const normalized = directionType.toLowerCase().replace(/_and_/g, '_').replace(/_/g, ',');
 
-  if (normalized.includes('up')) directions.push('up');
-  if (normalized.includes('down')) directions.push('down');
-  if (normalized.includes('left')) directions.push('left');
-  if (normalized.includes('right')) directions.push('right');
+  if (normalized.includes('up')) {
+    directions.push('up');
+  }
+  if (normalized.includes('down')) {
+    directions.push('down');
+  }
+  if (normalized.includes('left')) {
+    directions.push('left');
+  }
+  if (normalized.includes('right')) {
+    directions.push('right');
+  }
 
   return directions;
 }
@@ -413,7 +433,7 @@ async function findShortestPath(startQrCode, endQrCode, floorId, options = {}) {
       const dynamicAvoidList = Object.keys(occupiedMap).filter(
         (qr) =>
           qr !== startQrCode && // Don't avoid our own start
-          qr !== endQrCode // Don't avoid our destination
+          qr !== endQrCode, // Don't avoid our destination
       );
 
       options = { ...options, avoid: dynamicAvoidList };
@@ -428,7 +448,7 @@ async function findShortestPath(startQrCode, endQrCode, floorId, options = {}) {
   // If corridors not explicitly provided, fetch them for traffic-aware pathfinding
   if (options.corridors === undefined) {
     try {
-      const PathCacheService = require('../lifter/redis/PathCacheService');
+      const PathCacheService = require('./PathCacheService');
       options.corridors = await PathCacheService.detectTrafficFlowCorridors();
       logger.debug(`[Pathfinding] Detected ${options.corridors.size} traffic corridors for pathfinding`);
     } catch (err) {

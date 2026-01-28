@@ -1,6 +1,6 @@
 const mqtt = require('mqtt');
 const { logger } = require('../config/logger');
-const { updateShuttleState } = require('../modules/SHUTTLE/lifter/redis/shuttleStateCache');
+const { updateShuttleState } = require('../modules/SHUTTLE/services/shuttleStateCache');
 
 // MQTT Configuration
 const MQTT_BROKER_URL = process.env.MQTT_BROKER_URL || 'mqtt://10.14.80.78:1883';

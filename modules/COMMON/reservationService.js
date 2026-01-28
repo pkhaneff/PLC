@@ -46,7 +46,7 @@ class ReservationService {
         return true;
       }
       logger.warn(
-        `[ReservationService] Attempted to release a lock that did not exist or already expired: ${resourceKey}`
+        `[ReservationService] Attempted to release a lock that did not exist or already expired: ${resourceKey}`,
       );
       return false;
     } catch (error) {

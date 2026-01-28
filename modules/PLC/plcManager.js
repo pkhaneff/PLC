@@ -76,7 +76,9 @@ class PLCManager {
 
   getConnectionStats(plcId) {
     const reader = this.plcReaders[plcId];
-    if (!reader) return null;
+    if (!reader) {
+      return null;
+    }
     return reader.getStatus();
   }
 
@@ -86,7 +88,9 @@ class PLCManager {
 
   getValuesByPrefix(plcId, prefix) {
     const reader = this.plcReaders[plcId];
-    if (!reader) return {};
+    if (!reader) {
+      return {};
+    }
 
     const result = {};
     const allValues = reader.getAllValues();
@@ -109,7 +113,9 @@ class PLCManager {
 
   isPlcConnected(plcId) {
     const reader = this.plcReaders[plcId];
-    if (!reader) return false;
+    if (!reader) {
+      return false;
+    }
     return reader.isConnected;
   }
 
@@ -152,7 +158,7 @@ class PLCManager {
     if (bestPlcId) {
       const workerInfo = workersInfo.find((w) => w.plcId === bestPlcId);
       logger.warn(
-        `[PLCManager] All PLCs busy, selected ${bestPlcId} with queue length: ${workerInfo?.queuedTasks || 0}`
+        `[PLCManager] All PLCs busy, selected ${bestPlcId} with queue length: ${workerInfo?.queuedTasks || 0}`,
       );
     } else {
       logger.warn(`[PLCManager] No available PLC found (all inactive or disconnected)`);

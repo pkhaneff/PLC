@@ -1,7 +1,7 @@
 const { logger } = require('../config/logger');
 const { cellRepository: CellRepository } = require('../core/bootstrap');
 const redisClient = require('../redis/init.redis');
-const shuttleTaskQueueService = require('../modules/SHUTTLE/lifter/redis/shuttleTaskQueueService');
+const shuttleTaskQueueService = require('../modules/SHUTTLE/services/shuttleTaskQueueService');
 const ReservationService = require('../modules/COMMON/reservationService');
 const cellService = require('../modules/SHUTTLE/services/cellService');
 const ShuttleCounterService = require('../modules/SHUTTLE/services/ShuttleCounterService');
@@ -79,7 +79,7 @@ class Scheduler {
       const enforceRowCoordination = activeShuttleCount >= 2;
 
       let targetRow = stagedTask.targetRow; // Có thể đã được set từ trước
-      let targetFloor = stagedTask.targetFloor || stagedTask.pickupNodeFloorId;
+      const targetFloor = stagedTask.targetFloor || stagedTask.pickupNodeFloorId;
       let batchId = stagedTask.batchId;
 
       if (enforceRowCoordination) {
@@ -111,7 +111,7 @@ class Scheduler {
           targetRow = await RowCoordinationService.assignRowForBatch(
             batchId,
             availableNodes[0].qr_code, // Dùng QR của node đầu tiên
-            targetFloor
+            targetFloor,
           );
 
           if (!targetRow) {

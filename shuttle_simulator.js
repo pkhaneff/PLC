@@ -32,7 +32,7 @@ const client = mqtt.connect(MQTT_BROKER_URL, {
 });
 
 // --- Simulation State ---
-let shuttleStates = SHUTTLE_CONFIGS.map((config) => ({
+const shuttleStates = SHUTTLE_CONFIGS.map((config) => ({
   no: config.code,
   ip: config.ip,
   shuttleMode: 0, // Default shuttle mode
@@ -118,7 +118,7 @@ async function processMovement(state) {
         state.shuttleStatus = SHUTTLE_STATUS.DROPPING; // Mark as dropping
         state.missionCompleted++; // Increment mission counter
         console.log(
-          `[Simulator] Shuttle ${state.no} dropped off cargo, isCarrying=false, pallet lowered, missions: ${state.missionCompleted}`
+          `[Simulator] Shuttle ${state.no} dropped off cargo, isCarrying=false, pallet lowered, missions: ${state.missionCompleted}`,
         );
       }
 
@@ -167,7 +167,7 @@ async function processMovement(state) {
 
   // --- Conflict Detection ---
   const blockingShuttle = shuttleStates.find(
-    (otherShuttle) => otherShuttle.no !== state.no && otherShuttle.qrCode === nextNode
+    (otherShuttle) => otherShuttle.no !== state.no && otherShuttle.qrCode === nextNode,
   );
 
   if (blockingShuttle) {
@@ -176,7 +176,7 @@ async function processMovement(state) {
       state.shuttleStatus = SHUTTLE_STATUS.WAITING;
       const nextNodeName = await cellService.getDisplayNameWithoutFloor(nextNode);
       console.log(
-        `[Simulator] Shuttle ${state.no} is WAITING. Node ${nextNodeName} is occupied by shuttle ${blockingShuttle.no}.`
+        `[Simulator] Shuttle ${state.no} is WAITING. Node ${nextNodeName} is occupied by shuttle ${blockingShuttle.no}.`,
       );
       publishEvent('shuttle-waiting', state.no, {
         waitingAt: state.qrCode,
@@ -222,7 +222,7 @@ async function processMovement(state) {
 
 client.on('connect', () => {
   console.log(
-    `[Simulator] Connected. Initializing ${SHUTTLE_CONFIGS.length} agents. Travel time is ${NODE_TRAVEL_TIME_MS / 1000}s/node.`
+    `[Simulator] Connected. Initializing ${SHUTTLE_CONFIGS.length} agents. Travel time is ${NODE_TRAVEL_TIME_MS / 1000}s/node.`,
   );
 
   // Subscribe to handle and run topics
@@ -320,7 +320,7 @@ client.on('message', async (topic, message) => {
       // Ensure value is 0 or 1
       shuttle.runPermission = runValue === 1 ? 1 : 0;
       console.log(
-        `[Simulator] Shuttle ${shuttleCode} run permission set to: ${shuttle.runPermission} (${shuttle.runPermission === 1 ? 'ALLOWED' : 'NOT ALLOWED'})`
+        `[Simulator] Shuttle ${shuttleCode} run permission set to: ${shuttle.runPermission} (${shuttle.runPermission === 1 ? 'ALLOWED' : 'NOT ALLOWED'})`,
       );
       publishEvent('shuttle-run-permission-changed', shuttle.no, { runPermission: shuttle.runPermission });
       return;
@@ -338,7 +338,7 @@ client.on('message', async (topic, message) => {
   try {
     const command = JSON.parse(message.toString());
 
-    if (topicType === 'handle' && (command.totalStep !== undefined)) {
+    if (topicType === 'handle' && command.totalStep !== undefined) {
       console.log(`[Simulator] Shuttle ${shuttleCode} received handle command with ${command.totalStep} steps`);
 
       // Publish to shuttle/report/{code} to acknowledge receipt
@@ -372,10 +372,10 @@ client.on('message', async (topic, message) => {
         // Log path for debugging
         try {
           const pathNames = await Promise.all(
-            newPath.map((step) => cellService.getDisplayNameWithoutFloor(step.qrCode))
+            newPath.map((step) => cellService.getDisplayNameWithoutFloor(step.qrCode)),
           );
           const pathWithActions = newPath.map(
-            (step, idx) => `${pathNames[idx]}(dir:${step.direction},act:${step.action})`
+            (step, idx) => `${pathNames[idx]}(dir:${step.direction},act:${step.action})`,
           );
           console.log(`[Simulator] Shuttle ${shuttleCode} mission path: [${pathWithActions.join(' -> ')}]`);
         } catch (error) {

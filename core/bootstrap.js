@@ -25,7 +25,7 @@ try {
       const connection = DatabaseFactory.createConnection(dbConfig.type, dbConfig.config, 'default');
       return connection;
     },
-    true
+    true,
   ); // Singleton
 
   // ==================== REPOSITORIES ====================
@@ -40,7 +40,7 @@ try {
       const db = c.resolve('db');
       return new CellRepository(db);
     },
-    true
+    true,
   ); // Singleton
 
   // ==================== SERVICES ====================
@@ -54,7 +54,7 @@ try {
       const db = c.resolve('db');
       return new LifterService(db);
     },
-    true
+    true,
   ); // Singleton
 
   // ==================== CLEANUP ====================

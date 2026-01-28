@@ -12,7 +12,7 @@ const { logger } = require('./config/logger.js');
 const shuttleDispatcherService = require('./modules/SHUTTLE/services/shuttleDispatcherService');
 const taskEventListener = require('./modules/SHUTTLE/services/TaskEventListener');
 const { initializeMqttClient } = require('./services/mqttClientService');
-const PathCacheService = require('./modules/SHUTTLE/lifter/redis/PathCacheService');
+const PathCacheService = require('./modules/SHUTTLE/services/PathCacheService');
 
 const app = express();
 const server = http.createServer(app);

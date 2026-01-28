@@ -1,6 +1,6 @@
 const { logger } = require('../../../config/logger');
 const redisClient = require('../../../redis/init.redis');
-const { getShuttleState } = require('../lifter/redis/shuttleStateCache');
+const { getShuttleState } = require('../services/shuttleStateCache');
 
 /**
  * Service for calculating shuttle priority in conflict resolution.
@@ -99,7 +99,7 @@ class PriorityCalculationService {
       };
 
       logger.info(
-        `[PriorityCalc] Comparison: ${shuttle1Id}(${priority1}) vs ${shuttle2Id}(${priority2}) → Winner: ${result.winner}`
+        `[PriorityCalc] Comparison: ${shuttle1Id}(${priority1}) vs ${shuttle2Id}(${priority2}) → Winner: ${result.winner}`,
       );
 
       return result;

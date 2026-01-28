@@ -1,17 +1,20 @@
-// ESLint v9+ uses flat config format (eslint.config.js)
+// ESLint v9+ flat config
 const js = require('@eslint/js');
 const prettier = require('eslint-plugin-prettier');
 const prettierConfig = require('eslint-config-prettier');
+const tsPlugin = require('@typescript-eslint/eslint-plugin');
+const tsParser = require('@typescript-eslint/parser');
 
 module.exports = [
-  // Apply to all JS files
+  // =====================================================
+  // JAVASCRIPT FILES
+  // =====================================================
   {
     files: ['**/*.js'],
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',
       globals: {
-        // Node.js globals
         console: 'readonly',
         process: 'readonly',
         __dirname: 'readonly',
@@ -30,13 +33,10 @@ module.exports = [
       prettier,
     },
     rules: {
-      // Extend recommended rules
       ...js.configs.recommended.rules,
       ...prettierConfig.rules,
 
       // ===== CODING STANDARDS =====
-
-      // Max line length: 120 characters
       'max-len': [
         'error',
         {
@@ -46,11 +46,9 @@ module.exports = [
           ignoreStrings: true,
           ignoreTemplateLiterals: true,
           ignoreRegExpLiterals: true,
-          ignoreComments: false,
         },
       ],
 
-      // Max lines per file: 300 (warn at 300)
       'max-lines': [
         'warn',
         {
@@ -60,7 +58,6 @@ module.exports = [
         },
       ],
 
-      // Max lines per function: 30
       'max-lines-per-function': [
         'warn',
         {
@@ -71,48 +68,20 @@ module.exports = [
         },
       ],
 
-      // ===== ADDITIONAL BEST PRACTICES =====
-
-      // Complexity: max 10 (cyclomatic complexity)
+      // ===== BEST PRACTICES =====
       complexity: ['warn', 10],
-
-      // Max depth of nested blocks: 4
       'max-depth': ['warn', 4],
-
-      // Max nested callbacks: 3
       'max-nested-callbacks': ['warn', 3],
-
-      // Max parameters per function: 4
       'max-params': ['warn', 4],
-
-      // Require consistent return
       'consistent-return': 'warn',
 
-      // No unused variables
-      'no-unused-vars': [
-        'warn',
-        {
-          argsIgnorePattern: '^_',
-          varsIgnorePattern: '^_',
-        },
-      ],
-
-      // Prefer const over let
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
       'prefer-const': 'warn',
-
-      // No var
       'no-var': 'error',
-
-      // Require === instead of ==
       eqeqeq: ['error', 'always'],
-
-      // No console (off because we use winston)
+      curly: ['error', 'all'],
       'no-console': 'off',
 
-      // Require curly braces for all control statements
-      curly: ['error', 'all'],
-
-      // No multiple empty lines
       'no-multiple-empty-lines': [
         'error',
         {
@@ -121,11 +90,92 @@ module.exports = [
         },
       ],
 
-      // Prettier integration
+      // Prettier
       'prettier/prettier': 'error',
     },
   },
-  // Ignore patterns
+
+  // =====================================================
+  // TYPESCRIPT FILES
+  // =====================================================
+  {
+    files: ['**/*.ts', '**/*.tsx'],
+    languageOptions: {
+      parser: tsParser,
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+    },
+    plugins: {
+      prettier,
+      '@typescript-eslint': tsPlugin,
+    },
+    rules: {
+      ...js.configs.recommended.rules,
+      ...prettierConfig.rules,
+
+      // ===== NAMING CONVENTION =====
+      '@typescript-eslint/naming-convention': [
+        'error',
+
+        // Variables & functions
+        {
+          selector: 'variableLike',
+          format: ['camelCase'],
+          leadingUnderscore: 'allow',
+        },
+
+        // Boolean variables
+        {
+          selector: 'variable',
+          types: ['boolean'],
+          format: ['camelCase'],
+          prefix: ['is', 'has', 'can', 'should', 'did', 'will'],
+        },
+
+        // Functions
+        {
+          selector: 'function',
+          format: ['camelCase'],
+        },
+
+        // Classes, interfaces, types, enums
+        {
+          selector: 'typeLike',
+          format: ['PascalCase'],
+        },
+
+        // Enum members
+        {
+          selector: 'enumMember',
+          format: ['UPPER_CASE'],
+        },
+
+        // Constants
+        {
+          selector: 'variable',
+          modifiers: ['const'],
+          format: ['camelCase', 'UPPER_CASE'],
+        },
+
+        // Private members
+        {
+          selector: 'memberLike',
+          modifiers: ['private'],
+          format: ['camelCase'],
+          leadingUnderscore: 'require',
+        },
+      ],
+
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+
+      // Prettier
+      'prettier/prettier': 'error',
+    },
+  },
+
+  // =====================================================
+  // IGNORE FILES
+  // =====================================================
   {
     ignores: ['node_modules/**', 'dist/**', 'build/**', 'coverage/**', '*.min.js', 'logs/**'],
   },

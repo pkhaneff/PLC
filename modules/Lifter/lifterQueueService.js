@@ -96,7 +96,7 @@ class LifterQueueService {
       const position = await redisClient.zRank(this.GLOBAL_QUEUE_KEY, JSON.stringify(globalQueueData));
 
       console.log(
-        `✓ Task ${taskId} registered: Floor ${fromFloor} → ${toFloor}, Lifter ${lifterId}, Position: ${position + 1}`
+        `✓ Task ${taskId} registered: Floor ${fromFloor} → ${toFloor}, Lifter ${lifterId}, Position: ${position + 1}`,
       );
 
       return {
@@ -298,7 +298,9 @@ class LifterQueueService {
   async getCurrentProcessingTask() {
     try {
       const taskId = await redisClient.get(this.PROCESSING_KEY);
-      if (!taskId) return null;
+      if (!taskId) {
+        return null;
+      }
 
       return await this.getTaskDetails(taskId);
     } catch (error) {

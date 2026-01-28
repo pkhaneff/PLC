@@ -22,7 +22,7 @@ const uvicornFormatter = winston.format.combine(
     const coloredMessage = `${MESSAGE_COLOR}${message}${RESET_COLOR}`;
 
     return `${coloredTime} | ${coloredLevel} | ${coloredService} : ${coloredMessage}`;
-  })
+  }),
 );
 
 function configureLogging() {

@@ -1,6 +1,6 @@
 const { logger } = require('../../../config/logger');
 const { findShortestPath, findShortestPathByQrCode } = require('../services/pathfinding');
-const { getShuttleState } = require('../lifter/redis/shuttleStateCache');
+const { getShuttleState } = require('../services/shuttleStateCache');
 const { publishToTopic } = require('../../../services/mqttClientService');
 const redisClient = require('../../../redis/init.redis');
 const ParkingNodeService = require('./ParkingNodeService');
@@ -133,7 +133,7 @@ class BacktrackService {
 
       if (!currentCell) {
         logger.error(
-          `[Backtrack] Current node ${currentNode} not found on floor ${floorId}. Shuttle state may be out of sync.`
+          `[Backtrack] Current node ${currentNode} not found on floor ${floorId}. Shuttle state may be out of sync.`,
         );
         return false;
       }
@@ -215,14 +215,20 @@ class BacktrackService {
   }
 
   async resolveToQr(node, floorId) {
-    if (!node) return null;
+    if (!node) {
+      return null;
+    }
     // 1. Try as QR first
     let cell = await cellService.getCellByQrCode(node, floorId);
-    if (cell) return cell.qr_code;
+    if (cell) {
+      return cell.qr_code;
+    }
 
     // 2. Try as Name
     cell = await cellService.getCellByName(node, floorId);
-    if (cell && cell.qr_code) return cell.qr_code;
+    if (cell && cell.qr_code) {
+      return cell.qr_code;
+    }
 
     // 3. Try as Coordinate (e.g., K4, J10)
     // Check if string matches Pattern [Letters][Numbers]

@@ -2,7 +2,7 @@ const { logger } = require('../../../config/logger');
 const { findShortestPath } = require('../services/pathfinding');
 const { publishToTopic } = require('../../../services/mqttClientService');
 const redisClient = require('../../../redis/init.redis');
-const PathCacheService = require('../lifter/redis/PathCacheService');
+const PathCacheService = require('../services/PathCacheService');
 
 class RerouteService {
   async calculateBackupReroute(shuttleId, conflict, currentNode, targetNode, floorId, options = {}) {
@@ -27,7 +27,7 @@ class RerouteService {
         } else {
           if (options.emergency) {
             logger.warn(
-              `[Reroute] Emergency reroute: backup path cost ${rerouteCostValidation.costIncrease}% (exceeds dynamic limit) but forced.`
+              `[Reroute] Emergency reroute: backup path cost ${rerouteCostValidation.costIncrease}% (exceeds dynamic limit) but forced.`,
             );
             return {
               type: 'EMERGENCY_REROUTE',
@@ -37,7 +37,7 @@ class RerouteService {
             };
           } else {
             logger.warn(
-              `[Reroute] Backup path cost too high (${rerouteCostValidation.costIncrease}% > ${rerouteCostValidation.maxAcceptablePercentage}%)`
+              `[Reroute] Backup path cost too high (${rerouteCostValidation.costIncrease}% > ${rerouteCostValidation.maxAcceptablePercentage}%)`,
             );
           }
         }
@@ -45,7 +45,7 @@ class RerouteService {
 
       if (!backupPath) {
         logger.warn(
-          `[Reroute] Strategy 1 (explicit conflict node avoidance) failed for shuttle ${shuttleId}. Trying dynamic avoidance.`
+          `[Reroute] Strategy 1 (explicit conflict node avoidance) failed for shuttle ${shuttleId}. Trying dynamic avoidance.`,
         );
         backupPath = await findShortestPath(currentNode, targetNode, floorId, {
           isCarrying: options.isCarrying,
@@ -64,7 +64,7 @@ class RerouteService {
           } else {
             if (options.emergency) {
               logger.warn(
-                `[Reroute] Emergency reroute: backup path cost ${rerouteCostValidation.costIncrease}% (exceeds dynamic limit) but forced.`
+                `[Reroute] Emergency reroute: backup path cost ${rerouteCostValidation.costIncrease}% (exceeds dynamic limit) but forced.`,
               );
               return {
                 type: 'EMERGENCY_REROUTE',
@@ -74,7 +74,7 @@ class RerouteService {
               };
             } else {
               logger.warn(
-                `[Reroute] Backup path via dynamic avoidance cost too high (${rerouteCostValidation.costIncrease}% > ${rerouteCostValidation.maxAcceptablePercentage}%)`
+                `[Reroute] Backup path via dynamic avoidance cost too high (${rerouteCostValidation.costIncrease}% > ${rerouteCostValidation.maxAcceptablePercentage}%)`,
               );
             }
           }
@@ -151,7 +151,7 @@ class RerouteService {
       const acceptable = costIncrease <= maxAcceptablePercentage;
 
       logger.info(
-        `[Reroute][Pillar3] ${shuttleId} cost validation [${tier}]: original=${originalLength}, new=${newLength}, increase=${costIncrease.toFixed(2)}%, limit=${maxAcceptablePercentage}%, acceptable=${acceptable}`
+        `[Reroute][Pillar3] ${shuttleId} cost validation [${tier}]: original=${originalLength}, new=${newLength}, increase=${costIncrease.toFixed(2)}%, limit=${maxAcceptablePercentage}%, acceptable=${acceptable}`,
       );
 
       return {

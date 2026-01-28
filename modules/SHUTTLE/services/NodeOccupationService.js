@@ -51,7 +51,7 @@ class NodeOccupationService {
       if (currentOccupier && currentOccupier !== shuttleId) {
         const nodeName = await cellService.getDisplayNameWithoutFloor(nodeQr);
         logger.warn(
-          `[NodeOccupation] Cannot unblock node ${nodeName}: occupied by ${currentOccupier}, not ${shuttleId}`
+          `[NodeOccupation] Cannot unblock node ${nodeName}: occupied by ${currentOccupier}, not ${shuttleId}`,
         );
         return false;
       }

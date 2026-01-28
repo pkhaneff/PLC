@@ -1,7 +1,7 @@
 const { logger } = require('../../../config/logger');
 const cellService = require('../services/cellService');
 const { findShortestPath } = require('../services/pathfinding');
-const { getAllShuttleStates } = require('../lifter/redis/shuttleStateCache');
+const { getAllShuttleStates } = require('../services/shuttleStateCache');
 const ReservationService = require('../../COMMON/reservationService');
 const redisClient = require('../../../redis/init.redis');
 
@@ -33,7 +33,7 @@ class ParkingNodeService {
       const { nearNode, conflictNode, shuttleId, floorId, maxDistance = 3 } = criteria;
 
       logger.info(
-        `[ParkingNode] Finding parking for shuttle ${shuttleId} near ${nearNode}, conflict at ${conflictNode}`
+        `[ParkingNode] Finding parking for shuttle ${shuttleId} near ${nearNode}, conflict at ${conflictNode}`,
       );
 
       // Get all cells on the floor
@@ -46,10 +46,14 @@ class ParkingNodeService {
       // Filter candidates
       const candidates = allCells.filter((cell) => {
         // Must not be blocked
-        if (cell.is_block === 1) return false;
+        if (cell.is_block === 1) {
+          return false;
+        }
 
         // Must not have a box
-        if (cell.is_has_box === 1) return false;
+        if (cell.is_has_box === 1) {
+          return false;
+        }
 
         // Must not be in any active path
         if (activePathSet.has(cell.qr_code) || activePathSet.has(cell.name)) {
@@ -291,7 +295,9 @@ class ParkingNodeService {
    * @returns {Array<string>} Array of node QR codes
    */
   extractNodesFromPath(path) {
-    if (!path || !path.totalStep) return [];
+    if (!path || !path.totalStep) {
+      return [];
+    }
 
     const nodes = [];
     for (let i = 1; i <= path.totalStep; i++) {
@@ -316,7 +322,9 @@ class ParkingNodeService {
       const allShuttles = await getAllShuttleStates();
 
       for (const shuttle of allShuttles) {
-        if (shuttle.no === shuttleId) continue;
+        if (shuttle.no === shuttleId) {
+          continue;
+        }
 
         // Check if shuttle is occupying any node in the path
         if (pathNodes.includes(shuttle.qrCode)) {

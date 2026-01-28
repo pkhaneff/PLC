@@ -86,7 +86,9 @@ class CellService {
    */
   async enrichLogWithNames(qrCode, floorId) {
     const cell = await this.getCellWithNames(qrCode, floorId);
-    if (!cell) return `QR:${qrCode}`;
+    if (!cell) {
+      return `QR:${qrCode}`;
+    }
     return `${cell.name} (QR:${qrCode}, Rack:${cell.rack_name}, Floor:${cell.floor_name})`;
   }
 

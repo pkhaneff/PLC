@@ -1,10 +1,10 @@
 const { logger } = require('../../../config/logger');
 const { findShortestPath } = require('./pathfinding');
-const { getShuttleState } = require('../lifter/redis/shuttleStateCache');
+const { getShuttleState } = require('./shuttleStateCache');
 const cellService = require('./cellService');
 const { lifterService } = require('../../../core/bootstrap');
 const NodeOccupationService = require('./NodeOccupationService');
-const PathCacheService = require('../lifter/redis/PathCacheService');
+const PathCacheService = require('./PathCacheService');
 const { TASK_ACTIONS } = require('../../../config/shuttle.config');
 
 class MissionCoordinatorService {
@@ -38,7 +38,7 @@ class MissionCoordinatorService {
       }
 
       logger.info(
-        `[MissionCoordinator] Calculating path for ${shuttleId}: (${currentQr}, F${currentFloorId}) -> (${finalTargetQr}, F${finalTargetFloorId})`
+        `[MissionCoordinator] Calculating path for ${shuttleId}: (${currentQr}, F${currentFloorId}) -> (${finalTargetQr}, F${finalTargetFloorId})`,
       );
 
       let targetQr = finalTargetQr;
@@ -46,7 +46,7 @@ class MissionCoordinatorService {
       let onArrival = options.onArrival || 'TASK_COMPLETE';
       let lastStepAction =
         options.action || (onArrival === 'PICKUP_COMPLETE' ? TASK_ACTIONS.PICK_UP : TASK_ACTIONS.DROP_OFF);
-      let isCrossFloor = Number(currentFloorId) !== Number(finalTargetFloorId);
+      const isCrossFloor = Number(currentFloorId) !== Number(finalTargetFloorId);
 
       // --- LOGIC DI CHUYỂN KHÁC TẦNG ---
       if (isCrossFloor) {
@@ -63,7 +63,7 @@ class MissionCoordinatorService {
           lifterCell = lifterNodeOnFloor;
         } else {
           logger.debug(
-            `[MissionCoordinator] Designated lifter node ${lifterExitQr} not found on floor ${currentFloorId}. Falling back to DB search.`
+            `[MissionCoordinator] Designated lifter node ${lifterExitQr} not found on floor ${currentFloorId}. Falling back to DB search.`,
           );
           lifterCell = await lifterService.getLifterCellOnFloor(currentFloorId);
         }
@@ -112,7 +112,7 @@ class MissionCoordinatorService {
         taskId: options.taskId,
         isCarrying: options.isCarrying || false,
         endNodeQr: finalTargetQr,
-        targetFloorId: finalTargetFloorId
+        targetFloorId: finalTargetFloorId,
       });
 
       // --- NEW: LOOKAHEAD LOGIC FOR LIFTER ---
@@ -146,7 +146,7 @@ class MissionCoordinatorService {
 
           if (!isLifterAtFloor || isLifterMoving) {
             logger.info(
-              `[MissionCoordinator] Lifter Lookahead: Lifter not ready at F${currentFloorId} (Status: ${lifterStatus?.status}, Floor: ${lifterStatus?.currentFloor}). Requesting...`
+              `[MissionCoordinator] Lifter Lookahead: Lifter not ready at F${currentFloorId} (Status: ${lifterStatus?.status}, Floor: ${lifterStatus?.currentFloor}). Requesting...`,
             );
 
             // 1. Request Lifter

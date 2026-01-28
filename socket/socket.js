@@ -14,9 +14,9 @@ function setupSocketEvents(io) {
   };
 
   io.on('connection', (socket) => {
-    socket.on('disconnect', (reason) => { });
+    socket.on('disconnect', (reason) => {});
 
-    socket.on('error', (error) => { });
+    socket.on('error', (error) => {});
   });
 
   return io;

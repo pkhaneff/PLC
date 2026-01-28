@@ -99,7 +99,7 @@ class LifterCoordinationService {
             event: 'LIFTER_ARRIVED',
             floorId: floorId,
             shuttleId: shuttleId, // The one who requested it
-          })
+          }),
         );
       } catch (moveError) {
         logger.error(`[LifterCoordination] Move failed: ${moveError.message}`);
@@ -136,7 +136,7 @@ class LifterCoordinationService {
 
         if (physicalFloor && String(status.currentFloor) !== String(physicalFloor)) {
           logger.warn(
-            `[LifterCoordination] Drift detected! Redis: F${status.currentFloor}, PLC: F${physicalFloor}. Correcting...`
+            `[LifterCoordination] Drift detected! Redis: F${status.currentFloor}, PLC: F${physicalFloor}. Correcting...`,
           );
           status.currentFloor = physicalFloor;
           await redisClient.hSet(LIFTER_STATUS_KEY, 'currentFloor', physicalFloor);
@@ -155,9 +155,12 @@ class LifterCoordinationService {
         const posF2 = plcManager.getValue('PLC_1', 'LIFTER_1_POS_F2');
 
         let detectedFloor = null;
-        if (posF1)
-          detectedFloor = 138; // Mapping logical F1 -> 138
-        else if (posF2) detectedFloor = 139; // Mapping logical F2 -> 139
+        if (posF1) {
+          detectedFloor = 138;
+        } // Mapping logical F1 -> 138
+        else if (posF2) {
+          detectedFloor = 139;
+        } // Mapping logical F2 -> 139
 
         if (detectedFloor) {
           status = {

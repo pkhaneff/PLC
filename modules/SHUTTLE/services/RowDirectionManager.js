@@ -55,7 +55,7 @@ class RowDirectionManager {
 
         await redisClient.set(key, JSON.stringify(lockData), { EX: this.LOCK_TTL });
         logger.info(
-          `[RowDirectionManager] Locked row ${rowIdentifier} (floor ${floorId}) with direction ${direction} for shuttle ${shuttleId}`
+          `[RowDirectionManager] Locked row ${rowIdentifier} (floor ${floorId}) with direction ${direction} for shuttle ${shuttleId}`,
         );
         return true;
       }
@@ -69,14 +69,14 @@ class RowDirectionManager {
           lock.shuttles.push(shuttleId);
           await redisClient.set(key, JSON.stringify(lock), { EX: this.LOCK_TTL });
           logger.debug(
-            `[RowDirectionManager] Shuttle ${shuttleId} joined row ${rowIdentifier} (direction ${direction})`
+            `[RowDirectionManager] Shuttle ${shuttleId} joined row ${rowIdentifier} (direction ${direction})`,
           );
         }
         return true;
       } else {
         // Khác direction, từ chối
         logger.warn(
-          `[RowDirectionManager] Shuttle ${shuttleId} cannot enter row ${rowIdentifier}: direction mismatch (required: ${lock.direction}, requested: ${direction})`
+          `[RowDirectionManager] Shuttle ${shuttleId} cannot enter row ${rowIdentifier}: direction mismatch (required: ${lock.direction}, requested: ${direction})`,
         );
         return false;
       }
@@ -94,7 +94,9 @@ class RowDirectionManager {
       const key = this.getRowKey(floorId, rowIdentifier);
       const existingLock = await redisClient.get(key);
 
-      if (!existingLock) return;
+      if (!existingLock) {
+        return;
+      }
 
       const lock = JSON.parse(existingLock);
       lock.shuttles = lock.shuttles.filter((id) => id !== shuttleId);
@@ -103,7 +105,7 @@ class RowDirectionManager {
         // Không còn shuttle nào, xóa lock hoàn toàn
         await redisClient.del(key);
         logger.info(
-          `[RowDirectionManager] Row ${rowIdentifier} (floor ${floorId}) direction lock released (no shuttles left)`
+          `[RowDirectionManager] Row ${rowIdentifier} (floor ${floorId}) direction lock released (no shuttles left)`,
         );
       } else {
         // Còn shuttle khác, update lock
@@ -151,7 +153,9 @@ class RowDirectionManager {
 
       for (const key of keys) {
         const lock = await redisClient.get(key);
-        if (!lock) continue;
+        if (!lock) {
+          continue;
+        }
 
         const lockData = JSON.parse(lock);
         const age = Date.now() - lockData.lockedAt;

@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "nodemon app.js",
     "start:dev": "concurrently \"nodemon app.js\" \"node worker/scheduler.worker.js\"",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -27,6 +26,8 @@
     "winston": "^3.19.0"
   },
   "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.54.0",
+    "@typescript-eslint/parser": "^8.54.0",
     "concurrently": "^9.2.1",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",

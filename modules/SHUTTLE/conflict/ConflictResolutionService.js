@@ -3,9 +3,9 @@ const PriorityCalculationService = require('./PriorityCalculationService');
 const ParkingNodeService = require('./ParkingNodeService');
 const BacktrackService = require('./BacktrackService');
 const RerouteService = require('./RerouteService');
-const { getShuttleState } = require('../lifter/redis/shuttleStateCache');
+const { getShuttleState } = require('../services/shuttleStateCache');
 const redisClient = require('../../../redis/init.redis');
-const PathCacheService = require('../lifter/redis/PathCacheService');
+const PathCacheService = require('../services/PathCacheService');
 
 class ConflictResolutionService {
   async handleConflict(shuttleId, event) {
@@ -35,7 +35,7 @@ class ConflictResolutionService {
           shuttleId,
           taskInfo,
           blockedBy,
-          blockerTaskInfo
+          blockerTaskInfo,
         );
 
         if (comparison.winner === shuttleId) {
@@ -58,7 +58,7 @@ class ConflictResolutionService {
             shuttleId,
             taskInfo,
             potentialBlocker,
-            blockerTaskInfo
+            blockerTaskInfo,
           );
 
           if (comparison.winner === shuttleId) {
@@ -78,7 +78,7 @@ class ConflictResolutionService {
             shuttleId,
             conflict.currentNode,
             conflict,
-            await this.getFloorId(conflict.currentNode)
+            await this.getFloorId(conflict.currentNode),
           );
         }
       }
@@ -117,7 +117,7 @@ class ConflictResolutionService {
         conflict.currentNode,
         parkingNode,
         shuttleId,
-        floorId
+        floorId,
       );
 
       if (!validation.isValid) {
@@ -181,7 +181,7 @@ class ConflictResolutionService {
           shuttleId,
           backtrackResult.backtrackNode,
           backtrackResult.backtrackSteps,
-          floorId
+          floorId,
         );
 
         if (!backtracked) {
@@ -210,7 +210,7 @@ class ConflictResolutionService {
           shuttleId,
           backtrackResult.backtrackNode,
           backtrackResult.backtrackSteps,
-          floorId
+          floorId,
         );
 
         if (!backtracked) {
@@ -290,7 +290,7 @@ class ConflictResolutionService {
       // Get traffic data for reroute calculation
       const trafficData = await PathCacheService.getAllActivePaths();
 
-      let rerouteOptions = {
+      const rerouteOptions = {
         isCarrying: shuttleState?.isCarrying || false,
         waitingTime: waitingTime,
         trafficData: trafficData,
@@ -301,7 +301,7 @@ class ConflictResolutionService {
       if (waitingTime >= EMERGENCY_TIMEOUT) {
         rerouteOptions.emergency = true;
         logger.warn(
-          `[ConflictResolution] Shuttle ${shuttleId} waiting for ${waitingTime}ms. Activating emergency reroute!`
+          `[ConflictResolution] Shuttle ${shuttleId} waiting for ${waitingTime}ms. Activating emergency reroute!`,
         );
       }
 
@@ -310,7 +310,8 @@ class ConflictResolutionService {
 
       // Fix structure mismatch: currentPath is the object itself, and might not have meta
       // Check multiple possible locations for target node
-      const targetNode = pathMetadata?.endNodeQr ||
+      const targetNode =
+        pathMetadata?.endNodeQr ||
         currentPath?.meta?.endNodeQr ||
         currentPath?.endNodeQr ||
         taskInfo?.endNodeQr ||
@@ -332,8 +333,8 @@ class ConflictResolutionService {
             taskIdInTaskInfo: taskInfo?.taskId,
             hasCurrentPath: !!currentPath,
             hasPathMetadata: !!pathMetadata,
-            pathMeta: pathMetadata || currentPath?.meta
-          }
+            pathMeta: pathMetadata || currentPath?.meta,
+          },
         });
         await redisClient.del(`shuttle:${shuttleId}:waiting_since`);
         return;
@@ -345,7 +346,7 @@ class ConflictResolutionService {
         currentNode,
         targetNode,
         floorId,
-        rerouteOptions
+        rerouteOptions,
       );
 
       if (rerouteResult && rerouteResult.path) {
@@ -354,7 +355,7 @@ class ConflictResolutionService {
         return;
       } else {
         logger.warn(
-          `[ConflictResolution] No suitable reroute found for ${shuttleId} after ${waitingTime}ms wait (attempt ${retryCount + 1}).`
+          `[ConflictResolution] No suitable reroute found for ${shuttleId} after ${waitingTime}ms wait (attempt ${retryCount + 1}).`,
         );
 
         const MAX_RETRIES = 5;
@@ -367,7 +368,7 @@ class ConflictResolutionService {
           }, nextRetryDelay);
         } else {
           logger.error(
-            `[ConflictResolution] Max reroute retries reached or emergency timeout for ${shuttleId}. Escalating.`
+            `[ConflictResolution] Max reroute retries reached or emergency timeout for ${shuttleId}. Escalating.`,
           );
           await redisClient.del(`shuttle:${shuttleId}:waiting_since`);
         }
@@ -379,7 +380,7 @@ class ConflictResolutionService {
 
   async requestYield(targetShuttleId, requesterId, conflict) {
     try {
-      const { getShuttleState } = require('../lifter/redis/shuttleStateCache');
+      const { getShuttleState } = require('../services/shuttleStateCache');
       const targetState = await getShuttleState(targetShuttleId);
 
       if (!targetState) {
@@ -413,9 +414,11 @@ class ConflictResolutionService {
 
       const shuttleState = await getShuttleState(shuttleId);
       if (shuttleState && shuttleState.taskId) {
-        const shuttleTaskQueueService = require('../lifter/redis/shuttleTaskQueueService');
+        const shuttleTaskQueueService = require('../services/shuttleTaskQueueService');
         const taskDetail = await shuttleTaskQueueService.getTaskDetails(shuttleState.taskId);
-        if (taskDetail) return taskDetail;
+        if (taskDetail) {
+          return taskDetail;
+        }
       }
 
       return {
@@ -455,7 +458,7 @@ class ConflictResolutionService {
         return occupier;
       }
 
-      const allShuttles = await require('../lifter/redis/shuttleStateCache').getAllShuttleStates();
+      const allShuttles = await require('../services/shuttleStateCache').getAllShuttleStates();
       const shuttleAtNode = allShuttles.find((s) => s.qrCode === nodeQr);
       return shuttleAtNode ? shuttleAtNode.no : null;
     } catch (error) {

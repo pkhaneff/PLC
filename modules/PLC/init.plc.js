@@ -27,7 +27,9 @@ class InitPlc extends EventEmitter {
   }
 
   async connectPlc() {
-    if (this.isConnected) return;
+    if (this.isConnected) {
+      return;
+    }
 
     return new Promise((resolve, reject) => {
       this.conn = new nodes7();
@@ -57,7 +59,9 @@ class InitPlc extends EventEmitter {
   }
 
   async disConnect() {
-    if (!this.conn) return;
+    if (!this.conn) {
+      return;
+    }
 
     this.stopPolling();
 
@@ -122,10 +126,18 @@ class InitPlc extends EventEmitter {
   }
 
   parseError(err) {
-    if (typeof err === 'object' && err.message) return err.message;
-    if (typeof err === 'string') return err;
-    if (err === true) return 'Invalid Response Code from PLC';
-    if (typeof err === 'number') return `PLC Error Code: ${err}`;
+    if (typeof err === 'object' && err.message) {
+      return err.message;
+    }
+    if (typeof err === 'string') {
+      return err;
+    }
+    if (err === true) {
+      return 'Invalid Response Code from PLC';
+    }
+    if (typeof err === 'number') {
+      return `PLC Error Code: ${err}`;
+    }
     try {
       return JSON.stringify(err);
     } catch (e) {
@@ -140,7 +152,9 @@ class InitPlc extends EventEmitter {
   }
 
   scheduleReconnect() {
-    if (this.reconnectTimer || this.isShuttingDown) return;
+    if (this.reconnectTimer || this.isShuttingDown) {
+      return;
+    }
 
     const delay = this.reconnectAttempts < this.fastRetryLimit ? this.fastRetryDelay : this.reconnectInterval;
 
@@ -159,10 +173,14 @@ class InitPlc extends EventEmitter {
   }
 
   startPolling() {
-    if (this.pollingTimer) return;
+    if (this.pollingTimer) {
+      return;
+    }
 
     const poll = async () => {
-      if (this.isShuttingDown) return;
+      if (this.isShuttingDown) {
+        return;
+      }
 
       if (this.isReading) {
         this.pollingTimer = setTimeout(poll, this.pollingInterval);

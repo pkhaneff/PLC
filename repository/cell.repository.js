@@ -341,7 +341,7 @@ class CellRepository {
       const nodesInFirstRow = allNodes.filter((n) => n.row === firstRow && n.floor_id === firstFloor);
 
       logger.info(
-        `[CellRepository] Found ${nodesInFirstRow.length} occupied nodes in row ${firstRow} (floor ${firstFloor}, pallet ${palletType})`
+        `[CellRepository] Found ${nodesInFirstRow.length} occupied nodes in row ${firstRow} (floor ${firstFloor}, pallet ${palletType})`,
       );
       return nodesInFirstRow;
     } catch (error) {

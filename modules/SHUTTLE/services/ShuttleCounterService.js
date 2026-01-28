@@ -1,5 +1,5 @@
 const { logger } = require('../../../config/logger');
-const { getAllShuttleStates } = require('../lifter/redis/shuttleStateCache');
+const { getAllShuttleStates } = require('./shuttleStateCache');
 const redisClient = require('../../../redis/init.redis');
 const { SHUTTLE_STATUS } = require('../../../config/shuttle.config');
 

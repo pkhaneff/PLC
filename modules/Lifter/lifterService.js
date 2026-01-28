@@ -43,10 +43,16 @@ class LifterService {
    */
   mapFloorIdToLifterIndex(floorId) {
     // THACO logic: 138 -> 1 (Tầng 1), 139 -> 2 (Tầng 2)
-    if (floorId == 138) return 1;
-    if (floorId == 139) return 2;
+    if (floorId == 138) {
+      return 1;
+    }
+    if (floorId == 139) {
+      return 2;
+    }
     // Nếu truyền thẳng 1 hoặc 2 (legacy)
-    if (floorId == 1 || floorId == 2) return floorId;
+    if (floorId == 1 || floorId == 2) {
+      return floorId;
+    }
     return null;
   }
 
@@ -168,7 +174,9 @@ class LifterService {
   async isLifterAvailable(lifterId) {
     try {
       const lifter = await this.getLifterById(lifterId);
-      if (!lifter) return false;
+      if (!lifter) {
+        return false;
+      }
 
       return lifter.status === 'idle' || lifter.status === 'available';
     } catch (error) {
