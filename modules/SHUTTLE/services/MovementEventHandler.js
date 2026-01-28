@@ -1,9 +1,9 @@
-const { logger } = require('../../../logger/logger');
+const { logger } = require('../../../config/logger');
 const redisClient = require('../../../redis/init.redis');
 const cellService = require('./cellService');
-const { updateShuttleState, getShuttleState } = require('./shuttleStateCache');
+const { updateShuttleState, getShuttleState } = require('../lifter/redis/shuttleStateCache');
 const NodeOccupationService = require('./NodeOccupationService');
-const shuttleTaskQueueService = require('./shuttleTaskQueueService');
+const shuttleTaskQueueService = require('../lifter/redis/shuttleTaskQueueService');
 const ReservationService = require('../../COMMON/reservationService');
 const { warehouses } = require('../../../config/shuttle.config');
 

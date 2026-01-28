@@ -16,7 +16,7 @@ const COMPLETE_MISSION_TOPIC_PREFIX = 'shuttle/completeMission/';
 const EVENTS_TOPIC = 'shuttle/events';
 
 const SHUTTLE_CONFIGS = [
-  // { code: '001', ip: '192.168.1.101', startQrCode: 'X0002Y0020' },
+  { code: '001', ip: '192.168.1.101', startQrCode: 'X0002Y0020' },
   // { code: '002', ip: '192.168.1.102', startQrCode: 'X0003Y0001' },
   { code: '003', ip: '192.168.1.103', startQrCode: 'X0003Y0020' },
 ];

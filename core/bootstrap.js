@@ -3,7 +3,7 @@ const DatabaseFactory = require('../database/DatabaseFactory');
 const dbConfig = require('../database/DatabaseConfig');
 const CellRepository = require('../repository/cell.repository');
 const LifterService = require('../modules/Lifter/lifterService');
-const { logger } = require('../logger/logger');
+const { logger } = require('../config/logger');
 
 /**
  * Bootstrap application với Dependency Injection

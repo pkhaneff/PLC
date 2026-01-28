@@ -1,11 +1,11 @@
-const { logger } = require('../../../logger/logger');
+const { logger } = require('../../../config/logger');
 const redisClient = require('../../../redis/init.redis');
-const shuttleTaskQueueService = require('../services/shuttleTaskQueueService');
+const shuttleTaskQueueService = require('../lifter/redis/shuttleTaskQueueService');
 const cellService = require('../services/cellService');
-const { updateShuttleState, getShuttleState } = require('../services/shuttleStateCache');
+const { updateShuttleState, getShuttleState } = require('../lifter/redis/shuttleStateCache');
 const MissionCoordinatorService = require('../services/MissionCoordinatorService');
 const mqttClientService = require('../../../services/mqttClientService');
-const PathCacheService = require('../services/PathCacheService');
+const PathCacheService = require('../lifter/redis/PathCacheService');
 const { MQTT_TOPICS } = require('../../../config/shuttle.config');
 
 class OutboundTaskHandler {
@@ -55,6 +55,7 @@ class OutboundTaskHandler {
                     itemInfo: taskDetails.itemInfo,
                     isCarrying: true,
                     enforceOneWay: false, // Outbound không cần one-way logic
+                    ignoreBoxOnNodes: [pickupNodeQr], // Option 1: Bỏ qua node vừa bốc hàng khi tìm đường
                 }
             );
 

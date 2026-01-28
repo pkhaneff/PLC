@@ -1,4 +1,4 @@
-const { logger } = require('../logger/logger');
+const { logger } = require('../config/logger');
 
 const notFoundHandler = (req, res, next) => {
   res.status(404).json({

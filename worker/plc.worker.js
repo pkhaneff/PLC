@@ -1,5 +1,5 @@
 const { parentPort, workerData } = require('worker_threads');
-const { logger } = require('../logger/logger');
+const { logger } = require('../config/logger');
 const { plcId: workerPlcId } = workerData;
 
 parentPort.on('message', async (message) => {

@@ -1,4 +1,4 @@
-const { logger } = require('../logger/logger');
+const { logger } = require('../config/logger');
 
 /**
  * Repository for all database interactions with the 'cells' table.

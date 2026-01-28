@@ -1,10 +1,10 @@
-const { logger } = require('../../../logger/logger');
-const { findShortestPath, findShortestPathByQrCode } = require('./pathfinding');
-const { getShuttleState } = require('./shuttleStateCache');
+const { logger } = require('../../../config/logger');
+const { findShortestPath, findShortestPathByQrCode } = require('../services/pathfinding');
+const { getShuttleState } = require('../lifter/redis/shuttleStateCache');
 const { publishToTopic } = require('../../../services/mqttClientService');
 const redisClient = require('../../../redis/init.redis');
 const ParkingNodeService = require('./ParkingNodeService');
-const cellService = require('./cellService');
+const cellService = require('../services/cellService');
 
 /**
  * Service for handling shuttle backtracking in conflict resolution.

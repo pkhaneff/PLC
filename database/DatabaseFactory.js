@@ -1,5 +1,5 @@
 const MySQLConnection = require('./implementations/MySQLConnection');
-const { logger } = require('../logger/logger');
+const { logger } = require('../config/logger');
 
 /**
  * Database Factory - Factory Pattern

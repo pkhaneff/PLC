@@ -1,7 +1,7 @@
 const { Worker } = require('worker_threads');
 const EventEmitter = require('events');
 const path = require('path');
-const { logger } = require('../logger/logger');
+const { logger } = require('../config/logger');
 
 class WorkerManager extends EventEmitter {
   constructor() {

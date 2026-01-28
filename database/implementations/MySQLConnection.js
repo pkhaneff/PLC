@@ -1,5 +1,5 @@
 const mysql = require('mysql2/promise');
-const { logger } = require('../../logger/logger');
+const { logger } = require('../../config/logger');
 
 /**
  * MySQL implementation của IDatabaseConnection interface

@@ -1,5 +1,5 @@
 const workerManager = require('../worker/workerManager');
-const { logger } = require('../logger/logger');
+const { logger } = require('../config/logger');
 
 async function processWorkerTask(taskId, plcId, io) {
   try {

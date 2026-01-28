@@ -1,4 +1,4 @@
-const { logger } = require('../../../logger/logger');
+const { logger } = require('../../../config/logger');
 const cellService = require('./cellService');
 const { TASK_ACTIONS } = require('../../../config/shuttle.config');
 
@@ -211,9 +211,17 @@ async function getValidNeighborsFromDB(cell, floorId, targetQr = null, options =
     const neighborCell = await cellService.getCellByPosition(newCol, newRow, floorId);
 
     if (neighborCell && neighborCell.is_block !== 1) {
+      // Check if node should be avoided (e.g., occupied by another shuttle)
+      if (options.avoid && options.avoid.includes(neighborCell.qr_code)) {
+        continue;
+      }
+
       // Logic for blocking based on isShuttleCarrying and is_has_box
-      if (isShuttleCarrying && neighborCell.is_has_box === 1 && neighborCell.qr_code !== targetQr) {
-        continue; // Block if loaded shuttle and neighbor has box (not target)
+      if (isShuttleCarrying &&
+        neighborCell.is_has_box === 1 &&
+        neighborCell.qr_code !== targetQr &&
+        (!options.ignoreBoxOnNodes || !options.ignoreBoxOnNodes.includes(neighborCell.qr_code))) {
+        continue; // Block if loaded shuttle and neighbor has box (not target and not ignored)
       }
 
       // NEW: One-way constraint validation
@@ -420,7 +428,7 @@ async function findShortestPath(startQrCode, endQrCode, floorId, options = {}) {
   // If corridors not explicitly provided, fetch them for traffic-aware pathfinding
   if (options.corridors === undefined) {
     try {
-      const PathCacheService = require('./PathCacheService');
+      const PathCacheService = require('../lifter/redis/PathCacheService');
       options.corridors = await PathCacheService.detectTrafficFlowCorridors();
       logger.debug(`[Pathfinding] Detected ${options.corridors.size} traffic corridors for pathfinding`);
     } catch (err) {

@@ -1,6 +1,6 @@
-const { logger } = require('../../../logger/logger');
+const { logger } = require('../../../config/logger');
 const redisClient = require('../../../redis/init.redis');
-const { getShuttleState } = require('./shuttleStateCache');
+const { getShuttleState } = require('../lifter/redis/shuttleStateCache');
 
 /**
  * Service for calculating shuttle priority in conflict resolution.

@@ -1,11 +1,11 @@
-const { logger } = require('../../../logger/logger');
-const redisClient = require('../../../redis/init.redis');
-const shuttleTaskQueueService = require('./shuttleTaskQueueService');
-const { lifterService } = require('../../../core/bootstrap');
-const MissionCoordinatorService = require('./MissionCoordinatorService');
-const mqttClientService = require('../../../services/mqttClientService');
-const { TASK_ACTIONS, MQTT_TOPICS } = require('../../../config/shuttle.config');
-const LifterCoordinationService = require('../../Lifter/LifterCoordinationService');
+const { logger } = require('../../../../config/logger');
+const redisClient = require('../../../../redis/init.redis');
+const shuttleTaskQueueService = require('../redis/shuttleTaskQueueService');
+const { lifterService } = require('../../../../core/bootstrap');
+const MissionCoordinatorService = require('../../services/MissionCoordinatorService');
+const mqttClientService = require('../../../../services/mqttClientService');
+const { TASK_ACTIONS, MQTT_TOPICS } = require('../../../../config/shuttle.config');
+const LifterCoordinationService = require('../../../Lifter/LifterCoordinationService');
 
 class LifterEventHandler {
     async handleLifterEvent(payload, dispatcher) {

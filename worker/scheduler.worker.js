@@ -1,7 +1,7 @@
-const { logger } = require('../logger/logger');
+const { logger } = require('../config/logger');
 const { cellRepository: CellRepository } = require('../core/bootstrap');
 const redisClient = require('../redis/init.redis');
-const shuttleTaskQueueService = require('../modules/SHUTTLE/services/shuttleTaskQueueService');
+const shuttleTaskQueueService = require('../modules/SHUTTLE/lifter/redis/shuttleTaskQueueService');
 const ReservationService = require('../modules/COMMON/reservationService');
 const cellService = require('../modules/SHUTTLE/services/cellService');
 const ShuttleCounterService = require('../modules/SHUTTLE/services/ShuttleCounterService');

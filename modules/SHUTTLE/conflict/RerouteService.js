@@ -1,8 +1,8 @@
-const { logger } = require('../../../logger/logger');
-const { findShortestPath } = require('./pathfinding');
+const { logger } = require('../../../config/logger');
+const { findShortestPath } = require('../services/pathfinding');
 const { publishToTopic } = require('../../../services/mqttClientService');
 const redisClient = require('../../../redis/init.redis');
-const PathCacheService = require('./PathCacheService');
+const PathCacheService = require('../lifter/redis/PathCacheService');
 
 class RerouteService {
   async calculateBackupReroute(shuttleId, conflict, currentNode, targetNode, floorId, options = {}) {

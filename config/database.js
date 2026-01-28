@@ -1,4 +1,4 @@
-const { logger } = require('../logger/logger');
+const { logger } = require('./logger');
 
 logger.warn('[DEPRECATED] config/database.js is deprecated. Please use core/bootstrap.js instead.');
 

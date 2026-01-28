@@ -1,6 +1,6 @@
 const lifterService = require('../modules/Lifter/lifterService');
 const lifterQueueService = require('../modules/Lifter/lifterQueueService');
-const { logger } = require('../logger/logger');
+const { logger } = require('../config/logger');
 
 class LifterController {
   async requestTask(req, res) {

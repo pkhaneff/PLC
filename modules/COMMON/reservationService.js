@@ -1,5 +1,5 @@
 const redisClient = require('../../redis/init.redis');
-const { logger } = require('../../logger/logger');
+const { logger } = require('../../config/logger');
 
 /**
  * A generic service for acquiring and releasing distributed locks using Redis.

@@ -1,7 +1,7 @@
 const InitPlc = require('./init.plc');
 const workerManager = require('../../worker/workerManager');
 const plcStateManager = require('./PLCStateManager');
-const { logger } = require('../../logger/logger');
+const { logger } = require('../../config/logger');
 
 class PLCManager {
   constructor() {

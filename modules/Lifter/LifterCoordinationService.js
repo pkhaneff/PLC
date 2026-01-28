@@ -1,5 +1,5 @@
 const redisClient = require('../../redis/init.redis');
-const { logger } = require('../../logger/logger');
+const { logger } = require('../../config/logger');
 const { lifterService } = require('../../core/bootstrap');
 
 const LIFTER_QUEUE_KEY = 'lifter:coordinated_queue';

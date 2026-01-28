@@ -1,11 +1,11 @@
-const { logger } = require('../../../logger/logger');
+const { logger } = require('../../../config/logger');
 const PriorityCalculationService = require('./PriorityCalculationService');
 const ParkingNodeService = require('./ParkingNodeService');
 const BacktrackService = require('./BacktrackService');
 const RerouteService = require('./RerouteService');
-const { getShuttleState } = require('./shuttleStateCache');
+const { getShuttleState } = require('../lifter/redis/shuttleStateCache');
 const redisClient = require('../../../redis/init.redis');
-const PathCacheService = require('./PathCacheService');
+const PathCacheService = require('../lifter/redis/PathCacheService');
 
 class ConflictResolutionService {
   async handleConflict(shuttleId, event) {
@@ -125,7 +125,7 @@ class ConflictResolutionService {
         return await this.useBacktrackStrategy(shuttleId, conflict, floorId);
       }
 
-      const { findShortestPath } = require('./pathfinding');
+      const { findShortestPath } = require('../services/pathfinding');
       const pathToParking = await findShortestPath(conflict.currentNode, parkingNode, floorId);
 
       if (!pathToParking) {
@@ -306,11 +306,35 @@ class ConflictResolutionService {
       }
 
       const currentPath = await PathCacheService.getPath(shuttleId);
-      const targetNode = currentPath?.path?.meta?.endNodeQr || taskInfo?.endNodeQr || taskInfo?.pickupNodeQr;
-      const currentNode = shuttleState?.qrCode;
+      const pathMetadata = await PathCacheService.getPathMetadata(shuttleId);
+
+      // Fix structure mismatch: currentPath is the object itself, and might not have meta
+      // Check multiple possible locations for target node
+      const targetNode = pathMetadata?.endNodeQr ||
+        currentPath?.meta?.endNodeQr ||
+        currentPath?.endNodeQr ||
+        taskInfo?.endNodeQr ||
+        taskInfo?.pickupNodeQr ||
+        shuttleState?.targetQr;
+
+      const currentNode = shuttleState?.qrCode || shuttleState?.current_node;
 
       if (!targetNode || !currentNode) {
-        logger.error(`[ConflictResolution] Cannot determine target or current node for reroute of ${shuttleId}.`);
+        logger.error({
+          message: `[ConflictResolution] Cannot determine target or current node for reroute of ${shuttleId}.`,
+          debug: {
+            shuttleId,
+            hasShuttleState: !!shuttleState,
+            currentNode,
+            targetNode,
+            hasTaskInfo: !!taskInfo,
+            taskIdInState: shuttleState?.taskId,
+            taskIdInTaskInfo: taskInfo?.taskId,
+            hasCurrentPath: !!currentPath,
+            hasPathMetadata: !!pathMetadata,
+            pathMeta: pathMetadata || currentPath?.meta
+          }
+        });
         await redisClient.del(`shuttle:${shuttleId}:waiting_since`);
         return;
       }
@@ -355,7 +379,7 @@ class ConflictResolutionService {
 
   async requestYield(targetShuttleId, requesterId, conflict) {
     try {
-      const { getShuttleState } = require('./shuttleStateCache');
+      const { getShuttleState } = require('../lifter/redis/shuttleStateCache');
       const targetState = await getShuttleState(targetShuttleId);
 
       if (!targetState) {
@@ -389,7 +413,7 @@ class ConflictResolutionService {
 
       const shuttleState = await getShuttleState(shuttleId);
       if (shuttleState && shuttleState.taskId) {
-        const shuttleTaskQueueService = require('./shuttleTaskQueueService');
+        const shuttleTaskQueueService = require('../lifter/redis/shuttleTaskQueueService');
         const taskDetail = await shuttleTaskQueueService.getTaskDetails(shuttleState.taskId);
         if (taskDetail) return taskDetail;
       }
@@ -406,7 +430,7 @@ class ConflictResolutionService {
 
   async getFloorId(qrCode) {
     try {
-      const cellService = require('./cellService');
+      const cellService = require('../services/cellService');
       const cells = await cellService.getCellByQrCodeAnyFloor(qrCode);
 
       if (cells && cells.length > 0) {
@@ -431,7 +455,7 @@ class ConflictResolutionService {
         return occupier;
       }
 
-      const allShuttles = await require('./shuttleStateCache').getAllShuttleStates();
+      const allShuttles = await require('../lifter/redis/shuttleStateCache').getAllShuttleStates();
       const shuttleAtNode = allShuttles.find((s) => s.qrCode === nodeQr);
       return shuttleAtNode ? shuttleAtNode.no : null;
     } catch (error) {

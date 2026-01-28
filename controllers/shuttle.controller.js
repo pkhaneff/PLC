@@ -1,10 +1,10 @@
-const { logger } = require('../logger/logger');
+const { logger } = require('../config/logger');
 const { asyncHandler } = require('../middlewares/error.middleware');
 const cellService = require('../modules/SHUTTLE/services/cellService');
-const shuttleTaskQueueService = require('../modules/SHUTTLE/services/shuttleTaskQueueService');
+const shuttleTaskQueueService = require('../modules/SHUTTLE/lifter/redis/shuttleTaskQueueService');
 const redisClient = require('../redis/init.redis');
 const { findShortestPath } = require('../modules/SHUTTLE/services/pathfinding');
-const { getShuttleState } = require('../modules/SHUTTLE/services/shuttleStateCache');
+const { getShuttleState } = require('../modules/SHUTTLE/lifter/redis/shuttleStateCache');
 const shuttleConfig = require('../config/shuttle.config');
 const { cellRepository: CellRepository } = require('../core/bootstrap');
 const shuttleDispatcherService = require('../modules/SHUTTLE/services/shuttleDispatcherService');
@@ -498,7 +498,7 @@ class ShuttleController {
       }
 
       // 2. Tìm shuttle IDLE trong executing mode
-      const { getAllShuttleStates } = require('../modules/SHUTTLE/services/shuttleStateCache');
+      const { getAllShuttleStates } = require('../modules/SHUTTLE/lifter/redis/shuttleStateCache');
       const allShuttles = await getAllShuttleStates();
       const executingShuttles = await ExecutingModeService.getExecutingShuttles();
 

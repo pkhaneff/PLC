@@ -1,6 +1,6 @@
 const lifterQueueService = require('./lifterQueueService');
 const plcManager = require('../PLC/plcManager');
-const { logger } = require('../../logger/logger');
+const { logger } = require('../../config/logger');
 
 /**
  * LifterService - Refactored to use Dependency Injection

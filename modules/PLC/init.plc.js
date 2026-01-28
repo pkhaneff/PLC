@@ -1,6 +1,6 @@
 const nodes7 = require('nodes7');
 const EventEmitter = require('events');
-const { logger } = require('../../logger/logger');
+const { logger } = require('../../config/logger');
 
 class InitPlc extends EventEmitter {
   constructor(config, variables, options = {}) {

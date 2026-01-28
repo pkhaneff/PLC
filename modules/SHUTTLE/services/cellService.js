@@ -1,5 +1,5 @@
 const { cellRepository: CellRepository } = require('../../../core/bootstrap');
-const { logger } = require('../../../logger/logger');
+const { logger } = require('../../../config/logger');
 
 /**
  * Service layer for cell-related business logic.

@@ -3,7 +3,7 @@ const workerManager = require('../worker/workerManager');
 const { randomUUID } = require('crypto');
 const { asyncHandler } = require('../middlewares/error.middleware');
 const { processWorkerTask } = require('../middlewares/workerProcessor.middleware');
-const { logger } = require('../logger/logger');
+const { logger } = require('../config/logger');
 
 class PLCController {
   getAllPLCs(req, res) {

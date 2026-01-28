@@ -1,7 +1,7 @@
-const { logger } = require('../../../logger/logger');
-const cellService = require('./cellService');
-const { findShortestPath } = require('./pathfinding');
-const { getAllShuttleStates } = require('./shuttleStateCache');
+const { logger } = require('../../../config/logger');
+const cellService = require('../services/cellService');
+const { findShortestPath } = require('../services/pathfinding');
+const { getAllShuttleStates } = require('../lifter/redis/shuttleStateCache');
 const ReservationService = require('../../COMMON/reservationService');
 const redisClient = require('../../../redis/init.redis');
 

@@ -1,10 +1,10 @@
-const { logger } = require('../../../logger/logger');
+const { logger } = require('../../../config/logger');
 const { findShortestPath } = require('./pathfinding');
-const { getShuttleState } = require('./shuttleStateCache');
+const { getShuttleState } = require('../lifter/redis/shuttleStateCache');
 const cellService = require('./cellService');
 const { lifterService } = require('../../../core/bootstrap');
 const NodeOccupationService = require('./NodeOccupationService');
-const PathCacheService = require('./PathCacheService');
+const PathCacheService = require('../lifter/redis/PathCacheService');
 const { TASK_ACTIONS } = require('../../../config/shuttle.config');
 
 class MissionCoordinatorService {
@@ -107,8 +107,13 @@ class MissionCoordinatorService {
         throw new Error(`Failed to find path to ${targetQr}`);
       }
 
-      // Lưu path vào cache
-      await PathCacheService.savePath(shuttleId, fullPath);
+      // Lưu path vào cache với metadata liên quan
+      await PathCacheService.savePath(shuttleId, fullPath, {
+        taskId: options.taskId,
+        isCarrying: options.isCarrying || false,
+        endNodeQr: finalTargetQr,
+        targetFloorId: finalTargetFloorId
+      });
 
       // --- NEW: LOOKAHEAD LOGIC FOR LIFTER ---
       // ONLY apply when cross-floor movement is required

@@ -1,14 +1,14 @@
-const { logger } = require('../../../logger/logger');
-const shuttleTaskQueueService = require('./shuttleTaskQueueService');
-const { getAllShuttleStates } = require('./shuttleStateCache'); // Use in-memory cache
+const { logger } = require('../../../config/logger');
+const shuttleTaskQueueService = require('../lifter/redis/shuttleTaskQueueService');
+const { getAllShuttleStates } = require('../lifter/redis/shuttleStateCache'); // Use in-memory cache
 const { publishToTopic } = require('../../../services/mqttClientService'); // To publish commands
 const cellService = require('./cellService'); // Using the alias NodeService internally
 const { findShortestPath } = require('./pathfinding');
 const ReservationService = require('../../COMMON/reservationService'); // Import the new service
-const PathCacheService = require('./PathCacheService'); // Import PathCacheService
+const PathCacheService = require('../lifter/redis/PathCacheService'); // Import PathCacheService
 const ShuttleCounterService = require('./ShuttleCounterService');
 const { TASK_ACTIONS, MQTT_TOPICS, MISSION_CONFIG } = require('../../../config/shuttle.config');
-const { getShuttleState, updateShuttleState } = require('./shuttleStateCache');
+const { getShuttleState, updateShuttleState } = require('../lifter/redis/shuttleStateCache');
 const NodeOccupationService = require('./NodeOccupationService');
 const MissionCoordinatorService = require('./MissionCoordinatorService');
 

@@ -8,11 +8,11 @@ const { notFoundHandler, errorHandler } = require('./middlewares');
 const plcManager = require('./modules/PLC/plcManager');
 const { plcsConfig } = require('./modules/PLC/configPLC');
 const healthController = require('./controllers/health.controller');
-const { logger } = require('./logger/logger.js');
+const { logger } = require('./config/logger.js');
 const shuttleDispatcherService = require('./modules/SHUTTLE/services/shuttleDispatcherService');
 const taskEventListener = require('./modules/SHUTTLE/services/TaskEventListener');
 const { initializeMqttClient } = require('./services/mqttClientService');
-const PathCacheService = require('./modules/SHUTTLE/services/PathCacheService');
+const PathCacheService = require('./modules/SHUTTLE/lifter/redis/PathCacheService');
 
 const app = express();
 const server = http.createServer(app);

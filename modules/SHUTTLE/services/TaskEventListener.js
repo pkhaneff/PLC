@@ -1,9 +1,9 @@
 const mqtt = require('mqtt');
-const { logger } = require('../../../logger/logger');
+const { logger } = require('../../../config/logger');
 const redisClient = require('../../../redis/init.redis');
-const shuttleTaskQueueService = require('./shuttleTaskQueueService');
-const ConflictResolutionService = require('./ConflictResolutionService');
-const LifterEventHandler = require('./LifterEventHandler');
+const shuttleTaskQueueService = require('../lifter/redis/shuttleTaskQueueService');
+const ConflictResolutionService = require('../conflict/ConflictResolutionService');
+const LifterEventHandler = require('../lifter/service/LifterEventHandler');
 const MovementEventHandler = require('./MovementEventHandler');
 const InboundTaskHandler = require('../IN/InboundTaskHandler');
 const OutboundTaskHandler = require('../OUT/OutboundTaskHandler');
