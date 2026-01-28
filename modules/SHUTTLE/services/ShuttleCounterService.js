@@ -1,30 +1,28 @@
 const { logger } = require('../../../config/logger');
-const { getAllShuttleStates } = require('./shuttleStateCache');
 const redisClient = require('../../../redis/init.redis');
-const { SHUTTLE_STATUS } = require('../../../config/shuttle.config');
 
 /**
- * Service để đếm số lượng shuttle đang active (không IDLE)
- * Dùng để quyết định bật/tắt one-way traffic mode
+ * Service to count the number of active shuttles (not IDLE).
+ * Used to decide whether to enable/disable one-way traffic mode.
  */
 class ShuttleCounterService {
   constructor() {
-    this.COUNTER_KEY = 'system:active_shuttle_count';
-    this.COUNTER_TTL = 10; // 10 giây
+    this._counterKey = 'system:active_shuttle_count';
+    this._counterTTL = 10; // 10 seconds
   }
 
   /**
-   * Đếm số shuttle đang trong executing mode (được kích hoạt qua /execute-storage)
-   * Chỉ đếm shuttles trong executing mode, không phải tất cả active shuttles
-   * @returns {Promise<number>} Số lượng shuttle trong executing mode
+   * Count shuttles in executing mode (activated via /execute-storage).
+   * Only counts shuttles in executing mode, not all active shuttles.
+   * @returns {Promise<number>} Number of shuttles in executing mode
    */
   async getActiveShuttleCount() {
     try {
       const ExecutingModeService = require('./ExecutingModeService');
       const count = await ExecutingModeService.getExecutingCount();
 
-      // Cache vào Redis
-      await redisClient.set(this.COUNTER_KEY, count.toString(), { EX: this.COUNTER_TTL });
+      // Cache in Redis
+      await redisClient.set(this._counterKey, count.toString(), { EX: this._counterTTL });
 
       logger.debug(`[ShuttleCounterService] Executing shuttle count: ${count}`);
       return count;
@@ -35,17 +33,17 @@ class ShuttleCounterService {
   }
 
   /**
-   * Lấy counter từ cache (nếu có), nếu không thì tính lại
+   * Get counter from cache (if available), otherwise recalculate.
    * @returns {Promise<number>}
    */
   async getCount() {
     try {
-      const cached = await redisClient.get(this.COUNTER_KEY);
+      const cached = await redisClient.get(this._counterKey);
       if (cached !== null) {
         return parseInt(cached, 10);
       }
 
-      // Cache miss, tính lại
+      // Cache miss, recalculate
       return await this.getActiveShuttleCount();
     } catch (error) {
       logger.error('[ShuttleCounterService] Error getting count:', error);
@@ -54,7 +52,7 @@ class ShuttleCounterService {
   }
 
   /**
-   * Update counter (gọi sau mỗi sự kiện dispatch hoặc complete)
+   * Update counter (call after each dispatch or complete event).
    * @returns {Promise<number>}
    */
   async updateCounter() {
@@ -62,7 +60,7 @@ class ShuttleCounterService {
   }
 
   /**
-   * Kiểm tra xem có nên enable one-way mode không
+   * Check if one-way mode should be enabled.
    * @returns {Promise<boolean>}
    */
   async shouldEnableOneWayMode() {

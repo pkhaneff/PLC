@@ -6,11 +6,11 @@ const LifterService = require('../modules/Lifter/lifterService');
 const { logger } = require('../config/logger');
 
 /**
- * Bootstrap application với Dependency Injection
- * Khởi tạo và cấu hình tất cả dependencies
+ * Bootstrap application with Dependency Injection.
+ * Initialize and configure all dependencies.
  */
 
-const container = new DIContainer();
+const _container = new DIContainer();
 
 try {
   // ==================== DATABASE ====================
@@ -18,7 +18,7 @@ try {
   /**
    * Register database connection
    */
-  container.register(
+  _container.register(
     'db',
     () => {
       logger.info('[Bootstrap] Initializing database connection...');
@@ -33,7 +33,7 @@ try {
   /**
    * Register CellRepository
    */
-  container.register(
+  _container.register(
     'cellRepository',
     (c) => {
       logger.info('[Bootstrap] Initializing CellRepository...');
@@ -48,7 +48,7 @@ try {
   /**
    * Register LifterService
    */
-  container.register(
+  _container.register(
     'lifterService',
     (c) => {
       const db = c.resolve('db');
@@ -64,8 +64,9 @@ try {
    */
   const gracefulShutdown = async (signal) => {
     try {
+      logger.info(`[Bootstrap] Shutdown signal received: ${signal}`);
       // Dispose container (will close all services)
-      await container.dispose();
+      await _container.dispose();
 
       // Close database factory
       await DatabaseFactory.closeAll();
@@ -81,6 +82,7 @@ try {
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 } catch (error) {
+  logger.error('[Bootstrap] Initialization failed:', error);
   process.exit(1);
 }
 
@@ -89,12 +91,12 @@ try {
 /**
  * Export container for advanced usage
  */
-module.exports = container;
+module.exports = _container;
 
 /**
- * Export initialized instances for backward compatibility
- * Cho phép các file cũ vẫn có thể import trực tiếp
+ * Export initialized instances for backward compatibility.
+ * Allows old files to import directly.
  */
-module.exports.db = container.resolve('db');
-module.exports.cellRepository = container.resolve('cellRepository');
-module.exports.lifterService = container.resolve('lifterService');
+module.exports.db = _container.resolve('db');
+module.exports.cellRepository = _container.resolve('cellRepository');
+module.exports.lifterService = _container.resolve('lifterService');

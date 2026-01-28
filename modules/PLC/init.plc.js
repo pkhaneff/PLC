@@ -1,4 +1,4 @@
-const nodes7 = require('nodes7');
+const NodeS7 = require('nodes7');
 const EventEmitter = require('events');
 const { logger } = require('../../config/logger');
 
@@ -6,24 +6,24 @@ class InitPlc extends EventEmitter {
   constructor(config, variables, options = {}) {
     super();
 
-    this.config = config;
-    this.variables = variables;
-    this.plcId = config.id || 'PLC';
+    this._config = config;
+    this._variables = variables;
+    this._plcId = config.id || 'PLC';
 
-    this.connectionTimeout = options.connectionTimeout || 3000;
-    this.reconnectInterval = options.reconnectInterval || 2000;
-    this.fastRetryDelay = options.fastRetryDelay || 500;
-    this.fastRetryLimit = options.fastRetryLimit || 5;
+    this._connectionTimeout = options.connectionTimeout || 3000;
+    this._reconnectInterval = options.reconnectInterval || 2000;
+    this._fastRetryDelay = options.fastRetryDelay || 500;
+    this._fastRetryLimit = options.fastRetryLimit || 5;
 
-    this.conn = null;
+    this._conn = null;
     this.isConnected = false;
-    this.isReading = false;
-    this.reconnectAttempts = 0;
-    this.reconnectTimer = null;
-    this.values = {};
-    this.pollingInterval = options.pollingInterval || 1000;
-    this.pollingTimer = null;
-    this.isShuttingDown = false;
+    this._isReading = false;
+    this._reconnectAttempts = 0;
+    this._reconnectTimer = null;
+    this._values = {};
+    this._pollingInterval = options.pollingInterval || 1000;
+    this._pollingTimer = null;
+    this._isShuttingDown = false;
   }
 
   async connectPlc() {
@@ -32,46 +32,46 @@ class InitPlc extends EventEmitter {
     }
 
     return new Promise((resolve, reject) => {
-      this.conn = new nodes7();
-      this.conn.globalTimeout = this.connectionTimeout;
-      this.conn.silentMode = true;
+      this._conn = new NodeS7();
+      this._conn.globalTimeout = this._connectionTimeout;
+      this._conn.silentMode = true;
 
-      logger.debug(`[${this.plcId}] Connecting...`);
+      logger.debug(`[${this._plcId}] Connecting...`);
 
-      this.conn.initiateConnection(this.config, (err) => {
+      this._conn.initiateConnection(this._config, (err) => {
         if (err) {
-          logger.error(`[${this.plcId}] Connection failed:`, err.message);
+          logger.error(`[${this._plcId}] Connection failed:`, err.message);
           this.isConnected = false;
           this.scheduleReconnect();
           reject(err);
           return;
         }
 
-        this.conn.setTranslationCB((tag) => this.variables[tag] || null);
-        this.conn.addItems(Object.keys(this.variables));
+        this._conn.setTranslationCB((tag) => this._variables[tag] || null);
+        this._conn.addItems(Object.keys(this._variables));
 
         this.isConnected = true;
-        this.reconnectAttempts = 0;
+        this._reconnectAttempts = 0;
         this.emit('connected');
         resolve();
       });
     });
   }
 
-  async disConnect() {
-    if (!this.conn) {
+  async disconnect() {
+    if (!this._conn) {
       return;
     }
 
     this.stopPolling();
 
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
     }
 
     return new Promise((resolve) => {
-      this.conn.dropConnection(() => {
+      this._conn.dropConnection(() => {
         this.isConnected = false;
         this.emit('disconnected');
         resolve();
@@ -80,22 +80,22 @@ class InitPlc extends EventEmitter {
   }
 
   async readItems() {
-    if (!this.isConnected || !this.conn) {
+    if (!this.isConnected || !this._conn) {
       return { error: 'Not connected', values: {} };
     }
 
     return new Promise((resolve) => {
-      this.conn.readAllItems((err, values) => {
+      this._conn.readAllItems((err, values) => {
         if (err) {
           const errorMsg = this.parseError(err);
-          logger.error(`[${this.plcId}] Read error:`, errorMsg);
+          logger.error(`[${this._plcId}] Read error:`, errorMsg);
 
           this.handleReadError(errorMsg);
           resolve({ error: err, values: {} });
           return;
         }
 
-        this.values = values;
+        this._values = values;
         this.emit('data', values);
         resolve({ error: null, values });
       });
@@ -103,7 +103,7 @@ class InitPlc extends EventEmitter {
   }
 
   async writeItems(tagName, value) {
-    if (!this.isConnected || !this.conn) {
+    if (!this.isConnected || !this._conn) {
       return { error: 'Not connected' };
     }
 
@@ -111,15 +111,15 @@ class InitPlc extends EventEmitter {
     const values = Array.isArray(value) ? value : [value];
 
     return new Promise((resolve) => {
-      logger.debug(`[${this.plcId}] Preparing to write: ${tags} = ${values}`);
-      this.conn.writeItems(tags, values, (err) => {
+      logger.debug(`[${this._plcId}] Preparing to write: ${tags} = ${values}`);
+      this._conn.writeItems(tags, values, (err) => {
         if (err) {
           const errorMsg = this.parseError(err);
-          logger.error(`[${this.plcId}] Write error on ${tags}:`, errorMsg);
+          logger.error(`[${this._plcId}] Write error on ${tags}:`, errorMsg);
           resolve({ error: err });
           return;
         }
-        logger.debug(`[${this.plcId}] Write success confirms locally: ${tags} = ${values}`);
+        logger.debug(`[${this._plcId}] Write success confirms locally: ${tags} = ${values}`);
         resolve({ error: null });
       });
     });
@@ -152,62 +152,62 @@ class InitPlc extends EventEmitter {
   }
 
   scheduleReconnect() {
-    if (this.reconnectTimer || this.isShuttingDown) {
+    if (this._reconnectTimer || this._isShuttingDown) {
       return;
     }
 
-    const delay = this.reconnectAttempts < this.fastRetryLimit ? this.fastRetryDelay : this.reconnectInterval;
+    const delay = this._reconnectAttempts < this._fastRetryLimit ? this._fastRetryDelay : this._reconnectInterval;
 
-    logger.debug(`[${this.plcId}] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts + 1})`);
+    logger.debug(`[${this._plcId}] Reconnecting in ${delay}ms (attempt ${this._reconnectAttempts + 1})`);
 
-    this.reconnectTimer = setTimeout(async () => {
-      this.reconnectTimer = null;
-      this.reconnectAttempts++;
+    this._reconnectTimer = setTimeout(async () => {
+      this._reconnectTimer = null;
+      this._reconnectAttempts++;
 
       try {
         await this.connectPlc();
       } catch (err) {
-        logger.error(`[${this.plcId}] Reconnect failed`);
+        logger.error(`[${this._plcId}] Reconnect failed`);
       }
     }, delay);
   }
 
   startPolling() {
-    if (this.pollingTimer) {
+    if (this._pollingTimer) {
       return;
     }
 
     const poll = async () => {
-      if (this.isShuttingDown) {
+      if (this._isShuttingDown) {
         return;
       }
 
-      if (this.isReading) {
-        this.pollingTimer = setTimeout(poll, this.pollingInterval);
+      if (this._isReading) {
+        this._pollingTimer = setTimeout(poll, this._pollingInterval);
         return;
       }
 
-      this.isReading = true;
+      this._isReading = true;
 
       try {
         await this.readItems();
       } catch (err) {
-        logger.error(`[${this.plcId}] Polling error:`, err.message);
+        logger.error(`[${this._plcId}] Polling error:`, err.message);
       } finally {
-        this.isReading = false;
+        this._isReading = false;
       }
 
-      this.pollingTimer = setTimeout(poll, this.pollingInterval);
+      this._pollingTimer = setTimeout(poll, this._pollingInterval);
     };
 
     poll();
   }
 
   stopPolling() {
-    if (this.pollingTimer) {
-      clearTimeout(this.pollingTimer);
-      this.pollingTimer = null;
-      logger.debug(`[${this.plcId}] Polling stopped`);
+    if (this._pollingTimer) {
+      clearTimeout(this._pollingTimer);
+      this._pollingTimer = null;
+      logger.debug(`[${this._plcId}] Polling stopped`);
     }
   }
 
@@ -216,38 +216,38 @@ class InitPlc extends EventEmitter {
       await this.connectPlc();
       this.startPolling();
     } catch (err) {
-      logger.error(`[${this.plcId}] Start failed:`, err.message);
+      logger.error(`[${this._plcId}] Start failed:`, err.message);
       throw err;
     }
   }
 
   async shutdown() {
-    this.isShuttingDown = true;
+    this._isShuttingDown = true;
     this.stopPolling();
 
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
     }
 
-    await this.disConnect();
+    await this.disconnect();
   }
 
   getValue(varName) {
-    return this.values[varName];
+    return this._values[varName];
   }
 
   getAllValues() {
-    return this.values;
+    return this._values;
   }
 
   getStatus() {
     return {
-      plcId: this.plcId,
+      plcId: this._plcId,
       isConnected: this.isConnected,
-      reconnectAttempts: this.reconnectAttempts,
-      totalTags: Object.keys(this.variables).length,
-      validTags: Object.keys(this.values).filter((k) => this.values[k] !== undefined).length,
+      reconnectAttempts: this._reconnectAttempts,
+      totalTags: Object.keys(this._variables).length,
+      validTags: Object.keys(this._values).filter((k) => this._values[k] !== undefined).length,
     };
   }
 }

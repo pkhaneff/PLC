@@ -5,8 +5,8 @@ const { logger } = require('../../config/logger');
 
 class PLCManager {
   constructor() {
-    this.plcReaders = {};
-    this.isInitialized = false;
+    this._plcReaders = {};
+    this._isInitialized = false;
   }
 
   async initializePLC(plcId, config, tags, options) {
@@ -21,7 +21,7 @@ class PLCManager {
 
     await reader.start();
 
-    this.plcReaders[plcId] = reader;
+    this._plcReaders[plcId] = reader;
 
     return reader;
   }
@@ -35,12 +35,11 @@ class PLCManager {
     });
 
     await Promise.all(initPromises);
-
-    this.isInitialized = true;
+    this._isInitialized = true;
   }
 
   getPLCReader(plcId) {
-    const reader = this.plcReaders[plcId];
+    const reader = this._plcReaders[plcId];
     if (!reader) {
       logger.warn(`[PLCManager] PLC '${plcId}' not found`);
     }
@@ -48,7 +47,7 @@ class PLCManager {
   }
 
   getValue(plcId, varName) {
-    const reader = this.plcReaders[plcId];
+    const reader = this._plcReaders[plcId];
     if (!reader) {
       logger.warn(`[PLCManager] PLC '${plcId}' not found`);
       return undefined;
@@ -57,7 +56,7 @@ class PLCManager {
   }
 
   async writeValue(plcId, varName, value) {
-    const reader = this.plcReaders[plcId];
+    const reader = this._plcReaders[plcId];
     if (!reader) {
       logger.warn(`[PLCManager] PLC '${plcId}' not found`);
       return { error: 'PLC not found' };
@@ -66,7 +65,7 @@ class PLCManager {
   }
 
   getAllValues(plcId) {
-    const reader = this.plcReaders[plcId];
+    const reader = this._plcReaders[plcId];
     if (!reader) {
       logger.warn(`[PLCManager] PLC '${plcId}' not found`);
       return {};
@@ -75,7 +74,7 @@ class PLCManager {
   }
 
   getConnectionStats(plcId) {
-    const reader = this.plcReaders[plcId];
+    const reader = this._plcReaders[plcId];
     if (!reader) {
       return null;
     }
@@ -83,11 +82,11 @@ class PLCManager {
   }
 
   getAllPLCIds() {
-    return Object.keys(this.plcReaders);
+    return Object.keys(this._plcReaders);
   }
 
   getValuesByPrefix(plcId, prefix) {
-    const reader = this.plcReaders[plcId];
+    const reader = this._plcReaders[plcId];
     if (!reader) {
       return {};
     }
@@ -104,7 +103,7 @@ class PLCManager {
   }
 
   async shutdownAll() {
-    const shutdownPromises = Object.entries(this.plcReaders).map(([plcId, reader]) => {
+    const shutdownPromises = Object.entries(this._plcReaders).map(([plcId, reader]) => {
       return reader.shutdown();
     });
 
@@ -112,7 +111,7 @@ class PLCManager {
   }
 
   isPlcConnected(plcId) {
-    const reader = this.plcReaders[plcId];
+    const reader = this._plcReaders[plcId];
     if (!reader) {
       return false;
     }
@@ -168,7 +167,7 @@ class PLCManager {
   }
 
   setPlcActive(plcId, isActive) {
-    const reader = this.plcReaders[plcId];
+    const reader = this._plcReaders[plcId];
     if (reader) {
       plcStateManager.setIsActive(plcId, isActive);
       return true;

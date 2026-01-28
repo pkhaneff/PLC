@@ -1,25 +1,25 @@
 // Shuttle Task Actions
 const TASK_ACTIONS = {
-  NO_ACTION: 10, // Không làm gì cả
-  PICK_UP: 11, // Lấy hàng (nâng pallet)
-  DROP_OFF: 12, // Bỏ hàng (hạ pallet)
-  SLOW_SPEED_1: 13, // Giảm tốc cấp 1 (chậm)
-  SLOW_SPEED_2: 14, // Giảm tốc cấp 2 (siêu chậm)
-  STOP_AT_NODE: 15, // Dừng khi di chuyển ở node cuối
-  FAST_SPEED: 16, // Đi nhanh 1/2
+  NO_ACTION: 10,
+  PICK_UP: 11, // Pick up (Lift pallet)
+  DROP_OFF: 12, // Drop off (Lower pallet)
+  SLOW_SPEED_1: 13, // Slow speed Level 1 (Slow)
+  SLOW_SPEED_2: 14, // Slow speed Level 2 (Very slow)
+  STOP_AT_NODE: 15, // Stop at the final node
+  FAST_SPEED: 16, // Move at 1/2 fast speed
 };
 
 // Shuttle Status Values
 const SHUTTLE_STATUS = {
-  ERROR: 1, // Lỗi
-  PICKING: 2, // Đang lấy hàng
-  DROPPING: 3, // Đang bỏ hàng
-  WHEELS_UP: 4, // Bánh xe nâng lên
-  WHEELS_DOWN: 5, // Bánh xe hạ xuống
-  SLOW_SPEED: 6, // Tốc độ chậm
-  NORMAL_SPEED: 7, // Tốc độ bình thường
-  IDLE: 8, // Rảnh rỗi
-  WAITING: 9, // Đang chờ
+  ERROR: 1,
+  PICKING: 2, // Picking up cargo
+  DROPPING: 3, // Dropping off cargo
+  WHEELS_UP: 4, // Wheels lifted
+  WHEELS_DOWN: 5, // Wheels lowered
+  SLOW_SPEED: 6,
+  NORMAL_SPEED: 7,
+  IDLE: 8,
+  WAITING: 9,
 };
 
 // MQTT Topics

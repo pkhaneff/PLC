@@ -10,7 +10,7 @@ const { logger } = require('../../../config/logger');
 class CellService {
   constructor() {
     // Cache for cell name lookups: "qrCode:floorId" -> name
-    this.nameCache = new Map();
+    this._nameCache = new Map();
   }
 
   // --- Read methods delegated to Repository ---
@@ -121,15 +121,15 @@ class CellService {
     const cacheKey = `${qrCode}:${floorId}`;
 
     // Check cache
-    if (this.nameCache.has(cacheKey)) {
-      return this.nameCache.get(cacheKey);
+    if (this._nameCache.has(cacheKey)) {
+      return this._nameCache.get(cacheKey);
     }
 
     // Fetch from DB
     const displayName = await this.getDisplayName(qrCode, floorId);
 
     // Store in cache
-    this.nameCache.set(cacheKey, displayName);
+    this._nameCache.set(cacheKey, displayName);
 
     return displayName;
   }
@@ -143,7 +143,7 @@ class CellService {
   async getDisplayNameWithoutFloor(qrCode) {
     try {
       // Try cache first (any floor)
-      for (const [key, value] of this.nameCache.entries()) {
+      for (const [key, value] of this._nameCache.entries()) {
         if (key.startsWith(`${qrCode}:`)) {
           return value;
         }
@@ -160,7 +160,7 @@ class CellService {
       // Cache it with floor_id
       if (cell.floor_id) {
         const cacheKey = `${qrCode}:${cell.floor_id}`;
-        this.nameCache.set(cacheKey, cell.name);
+        this._nameCache.set(cacheKey, cell.name);
       }
 
       return cell.name;
@@ -171,7 +171,7 @@ class CellService {
   }
 
   clearNameCache() {
-    this.nameCache.clear();
+    this._nameCache.clear();
   }
 
   async updateCellHasBox(cellId, hasBox, palletId) {

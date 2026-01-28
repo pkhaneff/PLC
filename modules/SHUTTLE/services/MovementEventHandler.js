@@ -20,13 +20,13 @@ class MovementEventHandler {
       const currentState = (await getShuttleState(shuttleId)) || {};
       await updateShuttleState(shuttleId, {
         ...currentState,
-        current_node: initialNode,
+        currentNode: initialNode,
         qrCode: initialNode,
       });
 
       // Block initial node where shuttle starts
       await NodeOccupationService.blockNode(initialNode, shuttleId);
-      const nodeName = await cellService.getDisplayNameWithoutFloor(initialNode);
+      await cellService.getDisplayNameWithoutFloor(initialNode);
     } catch (error) {
       logger.error(`[MovementHandler] Error handling shuttle-initialized for ${shuttleId}:`, error);
     }
@@ -44,7 +44,7 @@ class MovementEventHandler {
       const currentState = (await getShuttleState(shuttleId)) || {};
       await updateShuttleState(shuttleId, {
         ...currentState,
-        current_node: currentNode,
+        currentNode: currentNode,
         qrCode: currentNode,
       });
       logger.debug(`[MovementHandler] Updated shuttle ${shuttleId} position to ${currentNode}`);
@@ -95,8 +95,8 @@ class MovementEventHandler {
         }
 
         // BOTH conditions met IN ORDER: pickup completed + at exit + carrying cargo
-        const safetyNodeName = await cellService.getDisplayNameWithoutFloor(currentNode);
-        const pickupName = await cellService.getCachedDisplayName(taskInfo.pickupNodeQr, taskInfo.pickupNodeFloorId);
+        await cellService.getDisplayNameWithoutFloor(currentNode);
+        await cellService.getCachedDisplayName(taskInfo.pickupNodeQr, taskInfo.pickupNodeFloorId);
 
         const pickupLockKey = `pickup:lock:${config.pickupNodeQr}`;
         await ReservationService.releaseLock(pickupLockKey);

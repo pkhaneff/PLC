@@ -1,6 +1,7 @@
 const { parentPort, workerData } = require('worker_threads');
 const { logger } = require('../config/logger');
-const { plcId: workerPlcId } = workerData;
+
+const { plcId: _workerPlcId } = workerData;
 
 parentPort.on('message', async (message) => {
   const { taskId, action, data } = message;
@@ -19,7 +20,7 @@ parentPort.on('message', async (message) => {
 
     parentPort.postMessage({
       taskId,
-      plcId: workerPlcId,
+      plcId: _workerPlcId,
       status: 'success',
       data: result,
       timestamp: new Date().toISOString(),
@@ -27,27 +28,28 @@ parentPort.on('message', async (message) => {
   } catch (error) {
     parentPort.postMessage({
       taskId,
-      plcId: workerPlcId,
+      plcId: _workerPlcId,
       status: 'error',
       error: error.message,
       stack: error.stack,
       timestamp: new Date().toISOString(),
     });
 
-    logger.warn(`[PLCWorker:${workerPlcId}] Task ${taskId} failed:`, error.message);
+    logger.warn(`[PLCWorker:${_workerPlcId}] Task ${taskId} failed:`, error.message);
   }
 });
 
 async function fetchPLCData(taskData) {
   const { delay = 3000, plcId } = taskData;
+  const currentPlcId = plcId || _workerPlcId;
 
-  await setPLCActive(plcId || workerPlcId, false);
+  await setPLCActive(currentPlcId, false);
 
-  logger.debug(`[PLCWorker:${workerPlcId}] Waiting ${delay}ms before fetching values...`);
+  logger.debug(`[PLCWorker:${_workerPlcId}] Waiting ${delay}ms before fetching values...`);
   await sleep(delay);
 
-  const apiUrl = `http://localhost:${process.env.PORT || 3000}/api/v1/plc/${plcId || workerPlcId}/values`;
-  logger.debug(`[PLCWorker:${workerPlcId}] Calling API: ${apiUrl}`);
+  const apiUrl = `http://localhost:${process.env.PORT || 3000}/api/v1/plc/${currentPlcId}/values`;
+  logger.debug(`[PLCWorker:${_workerPlcId}] Calling API: ${apiUrl}`);
 
   const response = await fetch(apiUrl);
 
@@ -57,10 +59,10 @@ async function fetchPLCData(taskData) {
 
   const data = await response.json();
 
-  await setPLCActive(plcId || workerPlcId, true);
+  await setPLCActive(currentPlcId, true);
 
   return {
-    plcId: plcId || workerPlcId,
+    plcId: currentPlcId,
     message: 'PLC data loaded successfully',
     data: data,
     timestamp: new Date().toISOString(),
@@ -70,10 +72,9 @@ async function fetchPLCData(taskData) {
 async function setPLCActive(plcId, isActive) {
   try {
     const apiUrl = `http://localhost:${process.env.PORT || 3000}/api/v1/plc/${plcId}/active`;
-
-    logger.debug(`[PLCWorker:${workerPlcId}] Set PLC ${plcId} active=${isActive}`);
+    logger.debug(`[PLCWorker:${_workerPlcId}] Set PLC ${plcId} active=${isActive}`);
   } catch (error) {
-    logger.error(`[PLCWorker:${workerPlcId}] Failed to set PLC active:`, error.message);
+    logger.error(`[PLCWorker:${_workerPlcId}] Failed to set PLC active:`, error.message);
   }
 }
 
@@ -82,11 +83,11 @@ function sleep(ms) {
 }
 
 process.on('SIGTERM', () => {
-  logger.debug(`[PLCWorker:${workerPlcId}] Received SIGTERM, shutting down...`);
+  logger.debug(`[PLCWorker:${_workerPlcId}] Received SIGTERM, shutting down...`);
   parentPort.close();
 });
 
 process.on('SIGINT', () => {
-  logger.debug(`[PLCWorker:${workerPlcId}] Received SIGINT, shutting down...`);
+  logger.debug(`[PLCWorker:${_workerPlcId}] Received SIGINT, shutting down...`);
   parentPort.close();
 });

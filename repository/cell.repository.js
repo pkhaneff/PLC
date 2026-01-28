@@ -2,14 +2,14 @@ const { logger } = require('../config/logger');
 
 /**
  * Repository for all database interactions with the 'cells' table.
- * Refactored to use Dependency Injection - tuân thủ Dependency Inversion Principle
+ * Refactored to use Dependency Injection - adheres to Dependency Inversion Principle.
  */
 class CellRepository {
   /**
    * @param {Object} dbConnection - Database connection instance (injected)
    */
   constructor(dbConnection) {
-    this.db = dbConnection;
+    this._db = dbConnection;
   }
 
   /**
@@ -38,7 +38,7 @@ class CellRepository {
     params.push(cellId);
 
     try {
-      const [result] = await this.db.query(query, params);
+      const [result] = await this._db.query(query, params);
       return result.affectedRows > 0;
     } catch (error) {
       logger.error(`[CellRepository] Error updating is_has_box for cell ID ${cellId}:`, error);
@@ -46,11 +46,17 @@ class CellRepository {
     }
   }
 
+  /**
+   * Updates the block status of a cell.
+   * @param {number} cellId - Cell ID
+   * @param {boolean} isBlock - Block status
+   * @returns {Promise<boolean>}
+   */
   async updateCellBlockStatus(cellId, isBlock) {
     const statusValue = isBlock ? 1 : 0;
     const query = 'UPDATE cells SET is_block = ? WHERE id = ?;';
     try {
-      const [result] = await this.db.query(query, [statusValue, cellId]);
+      const [result] = await this._db.query(query, [statusValue, cellId]);
       return result.affectedRows > 0;
     } catch (error) {
       logger.error(`[CellRepository] Error updating is_block for cell ID ${cellId}:`, error);
@@ -58,10 +64,16 @@ class CellRepository {
     }
   }
 
+  /**
+   * Get cell by name and floor.
+   * @param {string} cellName - Cell name
+   * @param {number} floorId - Floor ID
+   * @returns {Promise<Object|null>}
+   */
   async getCellByName(cellName, floorId) {
     const query = 'SELECT * FROM cells WHERE name = ? AND floor_id = ?;';
     try {
-      const [rows] = await this.db.query(query, [cellName, floorId]);
+      const [rows] = await this._db.query(query, [cellName, floorId]);
       return rows[0] || null;
     } catch (error) {
       logger.error(`[CellRepository] Error fetching cell by name ${cellName}:`, error);
@@ -69,10 +81,15 @@ class CellRepository {
     }
   }
 
+  /**
+   * Get all cells with a specific name across floors.
+   * @param {string} name - Cell name
+   * @returns {Promise<Array>}
+   */
   async getCellByNameAnyFloor(name) {
     const query = 'SELECT * FROM cells WHERE name = ?;';
     try {
-      const [rows] = await this.db.query(query, [name]);
+      const [rows] = await this._db.query(query, [name]);
       return rows;
     } catch (error) {
       logger.error('[CellRepository] Error fetching cell by name (any floor):', error);
@@ -80,10 +97,16 @@ class CellRepository {
     }
   }
 
+  /**
+   * Get cell by QR code and floor.
+   * @param {string} qrCode - QR code
+   * @param {number} floorId - Floor ID
+   * @returns {Promise<Object|null>}
+   */
   async getCellByQrCode(qrCode, floorId) {
     const query = 'SELECT * FROM cells WHERE qr_code = ? AND floor_id = ?;';
     try {
-      const [rows] = await this.db.query(query, [qrCode, floorId]);
+      const [rows] = await this._db.query(query, [qrCode, floorId]);
       return rows[0] || null;
     } catch (error) {
       logger.error(`[CellRepository] Error fetching cell by QR code ${qrCode}:`, error);
@@ -91,10 +114,15 @@ class CellRepository {
     }
   }
 
+  /**
+   * Get all cells with a specific QR code across floors.
+   * @param {string} qrCode - QR code
+   * @returns {Promise<Array>}
+   */
   async getCellByQrCodeAnyFloor(qrCode) {
     const query = 'SELECT * FROM cells WHERE qr_code = ?;';
     try {
-      const [rows] = await this.db.query(query, [qrCode]);
+      const [rows] = await this._db.query(query, [qrCode]);
       return rows;
     } catch (error) {
       logger.error(`[CellRepository] Error fetching cell by QR code (any floor) for QR ${qrCode}:`, error);
@@ -102,10 +130,15 @@ class CellRepository {
     }
   }
 
+  /**
+   * Get all cells on a floor.
+   * @param {number} floorId - Floor ID
+   * @returns {Promise<Array>}
+   */
   async getAllCellsByFloor(floorId) {
     const query = 'SELECT * FROM cells WHERE floor_id = ? ORDER BY `row`, col;';
     try {
-      const [rows] = await this.db.query(query, [floorId]);
+      const [rows] = await this._db.query(query, [floorId]);
       return rows;
     } catch (error) {
       logger.error(`[CellRepository] Error fetching all cells by floor ${floorId}:`, error);
@@ -113,10 +146,17 @@ class CellRepository {
     }
   }
 
+  /**
+   * Get cell by position and floor.
+   * @param {number} col - Column
+   * @param {number} row - Row
+   * @param {number} floorId - Floor ID
+   * @returns {Promise<Object|null>}
+   */
   async getCellByPosition(col, row, floorId) {
     const query = 'SELECT * FROM cells WHERE col = ? AND `row` = ? AND floor_id = ?;';
     try {
-      const [rows] = await this.db.query(query, [col, row, floorId]);
+      const [rows] = await this._db.query(query, [col, row, floorId]);
       return rows[0] || null;
     } catch (error) {
       logger.error(`[CellRepository] Error fetching cell by position (${col},${row}) on floor ${floorId}:`, error);
@@ -124,6 +164,12 @@ class CellRepository {
     }
   }
 
+  /**
+   * Get floor by rack and floor names.
+   * @param {string} rackName - Rack name
+   * @param {string} floorName - Floor name
+   * @returns {Promise<Object|null>}
+   */
   async getFloorByRackAndFloorName(rackName, floorName) {
     const query = `
         SELECT f.*
@@ -132,7 +178,7 @@ class CellRepository {
         WHERE r.name = ? AND f.name = ?;
     `;
     try {
-      const [rows] = await this.db.query(query, [rackName, floorName]);
+      const [rows] = await this._db.query(query, [rackName, floorName]);
       return rows[0] || null;
     } catch (error) {
       logger.error(`[CellRepository] Error fetching floor by rack '${rackName}' and floor '${floorName}':`, error);
@@ -140,6 +186,11 @@ class CellRepository {
     }
   }
 
+  /**
+   * Get floor info by ID.
+   * @param {number} floorId - Floor ID
+   * @returns {Promise<Object|null>}
+   */
   async getFloorById(floorId) {
     const query = `
       SELECT f.*, r.name as rack_name, r.id as rack_id
@@ -148,7 +199,7 @@ class CellRepository {
       WHERE f.id = ?
     `;
     try {
-      const [rows] = await this.db.query(query, [floorId]);
+      const [rows] = await this._db.query(query, [floorId]);
       return rows[0] || null;
     } catch (error) {
       logger.error(`[CellRepository] Error fetching floor by ID ${floorId}:`, error);
@@ -156,23 +207,34 @@ class CellRepository {
     }
   }
 
+  /**
+   * Get cell by coordinate and floor.
+   */
   async getCellByCoordinate(col, row, floorId) {
     const query = `
       SELECT * FROM cells 
       WHERE \`col\` = ? AND \`row\` = ? AND floor_id = ?
       LIMIT 1;
     `;
-    const [rows] = await this.db.query(query, [col, row, floorId]);
-    return rows[0];
+    try {
+      const [rows] = await this._db.query(query, [col, row, floorId]);
+      return rows[0];
+    } catch (error) {
+      logger.error(`[CellRepository] Error fetching cell by coordinate (${col},${row}):`, error);
+      throw error;
+    }
   }
 
+  /**
+   * Validate rack and floor relationship.
+   */
   async validateRackFloor(rackId, floorId) {
     const query = `
       SELECT id FROM rack_floors
       WHERE id = ? AND rack_id = ?
     `;
     try {
-      const [rows] = await this.db.query(query, [floorId, rackId]);
+      const [rows] = await this._db.query(query, [floorId, rackId]);
       return rows.length > 0;
     } catch (error) {
       logger.error(`[CellRepository] Error validating rack ${rackId} and floor ${floorId}:`, error);
@@ -180,6 +242,9 @@ class CellRepository {
     }
   }
 
+  /**
+   * Get cell details including floor and rack names.
+   */
   async getCellWithNames(qrCode, floorId) {
     const query = `
       SELECT c.*, f.name as floor_name, r.name as rack_name
@@ -189,7 +254,7 @@ class CellRepository {
       WHERE c.qr_code = ? AND c.floor_id = ?
     `;
     try {
-      const [rows] = await this.db.query(query, [qrCode, floorId]);
+      const [rows] = await this._db.query(query, [qrCode, floorId]);
       return rows[0] || null;
     } catch (error) {
       logger.error(`[CellRepository] Error fetching cell with names for QR ${qrCode}:`, error);
@@ -210,7 +275,7 @@ class CellRepository {
       LIMIT 1;
     `;
     try {
-      const [rows] = await this.db.query(query, [qrCode]);
+      const [rows] = await this._db.query(query, [qrCode]);
       return rows[0] || null;
     } catch (error) {
       logger.error(`[CellRepository] Error fetching deep cell info for QR ${qrCode}:`, error);
@@ -219,11 +284,11 @@ class CellRepository {
   }
 
   /**
-   * Tìm row đầu tiên (theo FIFO) có node khả dụng, trả về TẤT CẢ node khả dụng trong row đó
-   * FIFO order: floor ASC, row ASC, col ASC
-   * @param {string} palletType - Loại pallet
-   * @param {number} floorId - Floor ID
-   * @returns {Promise<Array>} Danh sách tất cả node khả dụng trong row đầu tiên
+   * Find the first row (by FIFO) with available nodes, returning ALL available nodes in that row.
+   * FIFO order: floor ASC, row ASC, col ASC.
+   * @param {string} palletType - Pallet classification
+   * @param {number} floorId - Optional Floor ID
+   * @returns {Promise<Array>} List of all available nodes in the first matched row
    */
   async findAvailableNodesByFIFO(palletType, floorId = null) {
     let query = `
@@ -250,17 +315,18 @@ class CellRepository {
         `;
 
     try {
-      const [allNodes] = await this.db.query(query, params);
+      const [allNodes] = await this._db.query(query, params);
 
       if (!allNodes || allNodes.length === 0) {
         return [];
       }
 
       const firstRow = allNodes[0].row;
-
       const nodesInFirstRow = allNodes.filter((n) => n.row === firstRow);
 
-      `[CellRepository] Found ${nodesInFirstRow.length} available nodes in row ${firstRow} (floor ${floorId}, pallet ${palletType})`;
+      logger.info(
+        `[CellRepository] Found ${nodesInFirstRow.length} available nodes in row ${firstRow} (floor ${floorId}, pallet ${palletType})`,
+      );
       return nodesInFirstRow;
     } catch (error) {
       logger.error('[CellRepository] Error finding available nodes by FIFO:', error);
@@ -268,6 +334,9 @@ class CellRepository {
     }
   }
 
+  /**
+   * Get available nodes in a specific row.
+   */
   async getAvailableNodesInRow(floorId, row, palletType) {
     const query = `
             SELECT c.*
@@ -282,7 +351,7 @@ class CellRepository {
         `;
 
     try {
-      const [rows] = await this.db.query(query, [palletType, floorId, row]);
+      const [rows] = await this._db.query(query, [palletType, floorId, row]);
       return rows;
     } catch (error) {
       logger.error(`[CellRepository] Error getting available nodes in row ${row}:`, error);
@@ -291,12 +360,12 @@ class CellRepository {
   }
 
   /**
-   * Tìm row đầu tiên (theo FIFO) có node chứa hàng, trả về TẤT CẢ node có hàng trong row đó
-   * FIFO order cho OUTBOUND: floor ASC, row ASC, col ASC
-   * @param {string} palletType - Loại pallet
-   * @param {number} rackId - Rack ID (optional)
-   * @param {number} floorId - Floor ID (optional)
-   * @returns {Promise<Array>} Danh sách tất cả node có hàng trong row đầu tiên
+   * Find the first row (by FIFO) with occupied nodes, returning ALL occupied nodes in that row.
+   * FIFO order for OUTBOUND: floor ASC, row ASC, col ASC.
+   * @param {string} palletType - Pallet classification
+   * @param {number} rackId - Optional Rack ID
+   * @param {number} floorId - Optional Floor ID
+   * @returns {Promise<Array>} List of all occupied nodes in the first matched row
    */
   async findOccupiedNodesByFIFO(palletType, rackId = null, floorId = null) {
     let query = `
@@ -329,7 +398,7 @@ class CellRepository {
         `;
 
     try {
-      const [allNodes] = await this.db.query(query, params);
+      const [allNodes] = await this._db.query(query, params);
 
       if (!allNodes || allNodes.length === 0) {
         return [];
@@ -351,10 +420,10 @@ class CellRepository {
   }
 
   /**
-   * Lấy tất cả cells trong một row cụ thể
+   * Get all cells in a specific row.
    * @param {number} row - Row number
    * @param {number} floorId - Floor ID
-   * @returns {Promise<Array>} Danh sách tất cả cells trong row
+   * @returns {Promise<Array>}
    */
   async getCellsByRow(row, floorId) {
     const query = `
@@ -366,7 +435,7 @@ class CellRepository {
         `;
 
     try {
-      const [rows] = await this.db.query(query, [floorId, row]);
+      const [rows] = await this._db.query(query, [floorId, row]);
       return rows;
     } catch (error) {
       logger.error(`[CellRepository] Error getting cells in row ${row}:`, error);
@@ -375,9 +444,9 @@ class CellRepository {
   }
 
   /**
-   * Update node status (item_ID)
-   * @param {string} qrCode - QR code của node
-   * @param {object} data - Data cần update (ví dụ: { item_ID: "ITEM001" })
+   * Update node status (pallet_id).
+   * @param {string} qrCode - QR code
+   * @param {Object} data - Update data { item_ID: "..." }
    * @returns {Promise<boolean>}
    */
   async updateNodeStatus(qrCode, data) {
@@ -388,7 +457,7 @@ class CellRepository {
         `;
 
     try {
-      const [result] = await this.db.query(query, [data.item_ID || null, qrCode]);
+      const [result] = await this._db.query(query, [data.item_ID || null, qrCode]);
       return result.affectedRows > 0;
     } catch (error) {
       logger.error(`[CellRepository] Error updating node status for ${qrCode}:`, error);
@@ -398,8 +467,8 @@ class CellRepository {
 
   /**
    * Check if a pallet ID already exists in any cell.
-   * @param {string} palletId - The pallet ID to check.
-   * @param {string} palletType - The classification/type of the pallet.
+   * @param {string} palletId - Pallet ID
+   * @param {string} palletType - Pallet classification
    * @returns {Promise<boolean>}
    */
   async isPalletIdExists(palletId, palletType) {
@@ -409,7 +478,7 @@ class CellRepository {
             LIMIT 1;
         `;
     try {
-      const [rows] = await this.db.query(query, [palletId, palletType]);
+      const [rows] = await this._db.query(query, [palletId, palletType]);
       return rows.length > 0;
     } catch (error) {
       logger.error(`[CellRepository] Error checking if pallet ID ${palletId} exists:`, error);

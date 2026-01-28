@@ -15,7 +15,7 @@ class LifterController {
         });
       }
 
-      // Đăng ký task vào hàng đợi
+      // Register task into queue
       const result = await lifterService.requestLifterForTask(fromFloor, toFloor, lifterId, taskData);
 
       return res.status(200).json({
@@ -24,7 +24,7 @@ class LifterController {
         data: result,
       });
     } catch (error) {
-      console.error('Error in requestTask:', error);
+      logger.error(`Error in requestTask: ${error.message}`);
       return res.status(500).json({
         success: false,
         message: error.message || 'Internal server error',
@@ -50,7 +50,7 @@ class LifterController {
         data: nextTask,
       });
     } catch (error) {
-      console.error('Error in getNextTask:', error);
+      logger.error(`Error in getNextTask: ${error.message}`);
       return res.status(500).json({
         success: false,
         message: error.message || 'Internal server error',
@@ -59,7 +59,7 @@ class LifterController {
   }
 
   /**
-   * Bắt đầu xử lý một task
+   * Start processing a task.
    * POST /api/v1/lifter/start-task/:taskId
    */
   async startTask(req, res) {
@@ -81,7 +81,7 @@ class LifterController {
         data: { taskId },
       });
     } catch (error) {
-      console.error('Error in startTask:', error);
+      logger.error(`Error in startTask: ${error.message}`);
       return res.status(500).json({
         success: false,
         message: error.message || 'Internal server error',
@@ -90,7 +90,7 @@ class LifterController {
   }
 
   /**
-   * Hoàn thành một task
+   * Complete a task.
    * POST /api/v1/lifter/complete-task/:taskId
    */
   async completeTask(req, res) {
@@ -112,7 +112,7 @@ class LifterController {
         data: result,
       });
     } catch (error) {
-      console.error('Error in completeTask:', error);
+      logger.error(`Error in completeTask: ${error.message}`);
       return res.status(500).json({
         success: false,
         message: error.message || 'Internal server error',
@@ -121,7 +121,7 @@ class LifterController {
   }
 
   /**
-   * Lấy thống kê hàng đợi
+   * Get queue statistics.
    * GET /api/v1/lifter/queue-stats
    */
   async getQueueStats(req, res) {
@@ -134,7 +134,7 @@ class LifterController {
         data: stats,
       });
     } catch (error) {
-      console.error('Error in getQueueStats:', error);
+      logger.error(`Error in getQueueStats: ${error.message}`);
       return res.status(500).json({
         success: false,
         message: error.message || 'Internal server error',
@@ -143,7 +143,7 @@ class LifterController {
   }
 
   /**
-   * Lấy hàng đợi của một tầng cụ thể
+   * Get queue for a specific floor.
    * GET /api/v1/lifter/floor-queue/:floorId
    */
   async getFloorQueue(req, res) {
@@ -169,7 +169,7 @@ class LifterController {
         },
       });
     } catch (error) {
-      console.error('Error in getFloorQueue:', error);
+      logger.error(`Error in getFloorQueue: ${error.message}`);
       return res.status(500).json({
         success: false,
         message: error.message || 'Internal server error',
@@ -178,7 +178,7 @@ class LifterController {
   }
 
   /**
-   * Lấy hàng đợi tổng
+   * Get global queue.
    * GET /api/v1/lifter/global-queue?limit=10
    */
   async getGlobalQueue(req, res) {
@@ -195,7 +195,7 @@ class LifterController {
         },
       });
     } catch (error) {
-      console.error('Error in getGlobalQueue:', error);
+      logger.error(`Error in getGlobalQueue: ${error.message}`);
       return res.status(500).json({
         success: false,
         message: error.message || 'Internal server error',
@@ -204,7 +204,7 @@ class LifterController {
   }
 
   /**
-   * Lấy chi tiết một task
+   * Get details of a task.
    * GET /api/v1/lifter/task/:taskId
    */
   async getTaskDetails(req, res) {
@@ -233,7 +233,7 @@ class LifterController {
         data: taskDetails,
       });
     } catch (error) {
-      console.error('Error in getTaskDetails:', error);
+      logger.error(`Error in getTaskDetails: ${error.message}`);
       return res.status(500).json({
         success: false,
         message: error.message || 'Internal server error',
@@ -242,7 +242,7 @@ class LifterController {
   }
 
   /**
-   * Xóa toàn bộ hàng đợi (dùng cho testing)
+   * Clear all queues (used for testing).
    * DELETE /api/v1/lifter/clear-queues
    */
   async clearQueues(req, res) {
@@ -254,7 +254,7 @@ class LifterController {
         message: success ? 'All queues cleared successfully' : 'Failed to clear queues',
       });
     } catch (error) {
-      console.error('Error in clearQueues:', error);
+      logger.error(`Error in clearQueues: ${error.message}`);
       return res.status(500).json({
         success: false,
         message: error.message || 'Internal server error',
@@ -263,7 +263,7 @@ class LifterController {
   }
 
   /**
-   * Lấy thông tin lifter theo ID
+   * Get lifter information by ID.
    * GET /api/v1/lifter/info/:lifterId
    */
   async getLifterInfo(req, res) {
@@ -292,28 +292,13 @@ class LifterController {
         data: lifter,
       });
     } catch (error) {
-      console.error('Error in getLifterInfo:', error);
+      logger.error(`Error in getLifterInfo: ${error.message}`);
       return res.status(500).json({
         success: false,
         message: error.message || 'Internal server error',
       });
     }
   }
-
-  // async simulateControl(req, res) {
-  //   try {
-  //     const { targetFloor } = req.body;
-  //     const result = await lifterService.moveLifterToFloor(targetFloor);
-
-  //     return res.status(200).json(result);
-  //   } catch (error) {
-  //     console.error('Error in simulateControl:', error);
-  //     return res.status(500).json({
-  //       success: false,
-  //       message: error.message || 'Lỗi hệ thống'
-  //     });
-  //   }
-  // }
 }
 
 module.exports = new LifterController();

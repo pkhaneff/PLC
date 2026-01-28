@@ -2,15 +2,15 @@ const plcManager = require('../modules/PLC/plcManager');
 
 class HealthController {
   constructor() {
-    this.isInitialized = false;
+    this._isInitialized = false;
   }
 
   setInitialized(value) {
-    this.isInitialized = value;
+    this._isInitialized = value;
   }
 
   checkHealth(req, res) {
-    const isReady = this.isInitialized;
+    const isReady = this._isInitialized;
     const plcIds = isReady ? plcManager.getAllPLCIds() : [];
 
     res.json({

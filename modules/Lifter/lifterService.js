@@ -2,21 +2,28 @@ const lifterQueueService = require('./lifterQueueService');
 const plcManager = require('../PLC/plcManager');
 const { logger } = require('../../config/logger');
 
+const FLOOR_1_ID = 138;
+const FLOOR_2_ID = 139;
+const DEFAULT_AVG_TASK_DURATION = 60;
+const MAX_MOVE_TIME = 2000;
+const CHECK_MOVE_INTERVAL = 500;
+
 /**
- * LifterService - Refactored to use Dependency Injection
- * Tuân thủ Dependency Inversion Principle
+ * LifterService - Refactored to use Dependency Injection.
+ * Adheres to Dependency Inversion Principle.
  */
 class LifterService {
   /**
    * @param {Object} dbConnection - Database connection instance (injected)
    */
   constructor(dbConnection) {
-    this.db = dbConnection;
+    this._db = dbConnection;
   }
+
   /**
-   * Lấy lifter cell trên một tầng cụ thể
-   * Mỗi lifter có nhiều cells trên các tầng khác nhau nhưng cùng vị trí (col, row)
-   * @param {number} floorId - ID của tầng
+   * Get lifter cell on a specific floor.
+   * Each lifter has multiple cells on different floors but at the same position (col, row).
+   * @param {number} floorId - Floor ID
    * @returns {Object|null} Lifter cell object: { name, col, row, floor_id, qr_code, cell_id }
    */
   async getLifterCellOnFloor(floorId) {
@@ -30,26 +37,28 @@ class LifterService {
         LIMIT 1
       `;
 
-      const [rows] = await this.db.execute(query, [floorId]);
+      const [rows] = await this._db.execute(query, [floorId]);
       return rows[0] || null;
     } catch (error) {
-      console.error('Error fetching lifter cell on floor:', error);
+      logger.error(`[LifterService] Error fetching lifter cell on floor: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Chuyển đổi ID tầng từ Database sang chỉ số tầng của Lifter (1 hoặc 2)
+   * Maps Database floor ID to Lifter index (1 or 2).
+   * @param {number} floorId - Floor ID
+   * @returns {number|null} Lifter index
    */
   mapFloorIdToLifterIndex(floorId) {
-    // THACO logic: 138 -> 1 (Tầng 1), 139 -> 2 (Tầng 2)
-    if (floorId == 138) {
+    // THACO logic: 138 -> 1 (Floor 1), 139 -> 2 (Floor 2)
+    if (floorId == FLOOR_1_ID) {
       return 1;
     }
-    if (floorId == 139) {
+    if (floorId == FLOOR_2_ID) {
       return 2;
     }
-    // Nếu truyền thẳng 1 hoặc 2 (legacy)
+    // If 1 or 2 is passed directly (legacy support)
     if (floorId == 1 || floorId == 2) {
       return floorId;
     }
@@ -57,9 +66,9 @@ class LifterService {
   }
 
   /**
-   * Lấy tất cả lifter cells trên một tầng (nếu có nhiều lifters)
-   * @param {number} floorId - ID của tầng
-   * @returns {Array} Mảng lifter cells
+   * Get all lifter cells on a floor (in case of multiple lifters).
+   * @param {number} floorId - Floor ID
+   * @returns {Array} List of lifter cells
    */
   async getAllLifterCellsOnFloor(floorId) {
     try {
@@ -72,18 +81,18 @@ class LifterService {
         ORDER BY c.col, c.\`row\`
       `;
 
-      const [rows] = await this.db.execute(query, [floorId]);
+      const [rows] = await this._db.execute(query, [floorId]);
       return rows;
     } catch (error) {
-      console.error('Error fetching all lifter cells on floor:', error);
+      logger.error(`[LifterService] Error fetching all lifter cells on floor: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Kiểm tra xem một tầng có lifter không
-   * @param {number} floorId - ID của tầng
-   * @returns {boolean} true nếu có lifter, false nếu không
+   * Check if a floor has a lifter.
+   * @param {number} floorId - Floor ID
+   * @returns {boolean} True if lifter exists
    */
   async hasLifterOnFloor(floorId) {
     const lifterCell = await this.getLifterCellOnFloor(floorId);
@@ -91,8 +100,8 @@ class LifterService {
   }
 
   /**
-   * Lấy tất cả lifters đang rảnh (status = 'idle' hoặc tương tự)
-   * @returns {Array} Mảng lifters: [{ id, name, status, current_cell_id, ... }]
+   * Get all idle lifters.
+   * @returns {Array} List of available lifters
    */
   async getAvailableLifters() {
     try {
@@ -103,20 +112,19 @@ class LifterService {
         ORDER BY id
       `;
 
-      const [rows] = await this.db.execute(query);
+      const [rows] = await this._db.execute(query);
       return rows;
     } catch (error) {
-      console.error('Error fetching available lifters:', error);
+      logger.error(`[LifterService] Error fetching available lifters: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Lấy cells của một lifter cụ thể trên các tầng
-   * @param {number} lifterId - ID của lifter
-   * @param {Array<number>} floorIds - Mảng floor IDs cần lấy
-   * @returns {Object} Object với key là floor_id, value là cell info
-   * Ví dụ: { 138: { cell_id: 1405, name: 'A4', ... }, 139: { cell_id: 1406, name: 'A4', ... } }
+   * Get cells of a specific lifter across floors.
+   * @param {number} lifterId - Lifter ID
+   * @param {Array<number>} floorIds - List of floor IDs
+   * @returns {Object} Object with floor_id as key, cell info as value
    */
   async getLifterCellsByFloors(lifterId, floorIds) {
     try {
@@ -130,7 +138,7 @@ class LifterService {
         ORDER BY c.floor_id
       `;
 
-      const [rows] = await this.db.execute(query, [lifterId, ...floorIds]);
+      const [rows] = await this._db.execute(query, [lifterId, ...floorIds]);
 
       // Convert array to object { floor_id: cell_info }
       const result = {};
@@ -140,15 +148,15 @@ class LifterService {
 
       return result;
     } catch (error) {
-      console.error('Error fetching lifter cells by floors:', error);
+      logger.error(`[LifterService] Error fetching lifter cells by floors: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Lấy thông tin lifter theo ID (không cần tìm kiếm, chỉ lấy thông tin)
-   * @param {number} lifterId - ID của lifter được chỉ định
-   * @returns {Object|null} Lifter info
+   * Get lifter information by ID.
+   * @param {number} lifterId - Lifter ID
+   * @returns {Object|null} Lifter information
    */
   async getLifterById(lifterId) {
     try {
@@ -158,18 +166,18 @@ class LifterService {
         WHERE id = ?
       `;
 
-      const [rows] = await this.db.execute(query, [lifterId]);
+      const [rows] = await this._db.execute(query, [lifterId]);
       return rows[0] || null;
     } catch (error) {
-      console.error('Error fetching lifter by ID:', error);
+      logger.error(`[LifterService] Error fetching lifter by ID: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Kiểm tra lifter có sẵn để thực hiện nhiệm vụ không
-   * @param {number} lifterId - ID của lifter
-   * @returns {boolean} true nếu lifter sẵn sàng
+   * Check if a lifter is available for a task.
+   * @param {number} lifterId - Lifter ID
+   * @returns {boolean} True if lifter is ready
    */
   async isLifterAvailable(lifterId) {
     try {
@@ -180,39 +188,39 @@ class LifterService {
 
       return lifter.status === 'idle' || lifter.status === 'available';
     } catch (error) {
-      console.error('Error checking lifter availability:', error);
+      logger.error(`[LifterService] Error checking lifter availability: ${error.message}`);
       return false;
     }
   }
 
   /**
-   * Tạo yêu cầu sử dụng lifter cho nhiệm vụ khác tầng
-   * @param {number} fromFloor - Tầng xuất phát
-   * @param {number} toFloor - Tầng đích
-   * @param {number} lifterId - ID của lifter được chỉ định
-   * @param {Object} taskData - Dữ liệu bổ sung (shuttleId, orderId, etc.)
-   * @returns {Object} { taskId, queueInfo }
+   * Request lifter usage for cross-floor tasks.
+   * @param {number} fromFloor - Starting floor
+   * @param {number} toFloor - Destination floor
+   * @param {number} lifterId - Designated lifter ID
+   * @param {Object} taskData - Additional task data
+   * @returns {Object} Request result and queue info
    */
   async requestLifterForTask(fromFloor, toFloor, lifterId, taskData = {}) {
     try {
-      // Kiểm tra lifter có tồn tại không
+      // 1. Verify lifter exists
       const lifter = await this.getLifterById(lifterId);
       if (!lifter) {
         throw new Error(`Lifter ${lifterId} not found`);
       }
 
-      // Kiểm tra lifter có cells trên cả 2 tầng không
+      // 2. Verify lifter has cells on both floors
       const cells = await this.getLifterCellsByFloors(lifterId, [fromFloor, toFloor]);
       if (!cells[fromFloor] || !cells[toFloor]) {
         throw new Error(`Lifter ${lifterId} does not have cells on both floors ${fromFloor} and ${toFloor}`);
       }
 
-      // Kiểm tra cells không bị block
+      // 3. Verify cells are not blocked
       if (cells[fromFloor].is_block === 1 || cells[toFloor].is_block === 1) {
         throw new Error(`Lifter ${lifterId} cells are blocked on one or both floors`);
       }
 
-      // Đăng ký task vào hàng đợi Redis
+      // 4. Register task into Redis queue
       const queueInfo = await lifterQueueService.registerTask(fromFloor, toFloor, lifterId, {
         ...taskData,
         lifterName: lifter.name,
@@ -233,81 +241,79 @@ class LifterService {
         },
       };
     } catch (error) {
-      console.error('Error requesting lifter for task:', error);
+      logger.error(`[LifterService] Error requesting lifter for task: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Ước tính thời gian chờ dựa trên vị trí trong hàng đợi
-   * @param {number} position - Vị trí trong hàng đợi
-   * @returns {number} Thời gian chờ ước tính (giây)
+   * Estimate wait time based on queue position.
+   * @param {number} position - Position in queue
+   * @returns {number} Estimated wait time in seconds
    */
   estimateWaitTime(position) {
-    // Giả sử mỗi task trung bình mất 60 giây
-    const avgTaskDuration = 60;
-    return (position - 1) * avgTaskDuration;
+    // Assuming each task takes an average of 60 seconds
+    return (position - 1) * DEFAULT_AVG_TASK_DURATION;
   }
 
   /**
-   * Lấy task tiếp theo cần xử lý từ hàng đợi
-   * @returns {Object|null} Task data
+   * Get next task from the queue.
+   * @returns {Object|null} Next task data
    */
   async getNextTaskFromQueue() {
     try {
       return await lifterQueueService.getNextTask();
     } catch (error) {
-      console.error('Error getting next task from queue:', error);
+      logger.error(`[LifterService] Error getting next task from queue: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Đánh dấu task đang được xử lý
-   * @param {string} taskId - ID của task
+   * Mark task as processing.
+   * @param {string} taskId - Task ID
    * @returns {boolean} Success
    */
   async startProcessingTask(taskId) {
     try {
       return await lifterQueueService.markTaskAsProcessing(taskId);
     } catch (error) {
-      console.error('Error starting task processing:', error);
+      logger.error(`[LifterService] Error starting task processing: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Hoàn thành một task và lấy task tiếp theo
-   * @param {string} taskId - ID của task đã hoàn thành
-   * @returns {Object} { success, nextTask, stats }
+   * Mark task as complete and retrieve the next one.
+   * @param {string} taskId - Completed task ID
+   * @returns {Object} Completion result and next task
    */
   async completeTaskAndGetNext(taskId) {
     try {
-      const result = await lifterQueueService.completeTask(taskId);
-      return result;
+      return await lifterQueueService.completeTask(taskId);
     } catch (error) {
-      console.error('Error completing task:', error);
+      logger.error(`[LifterService] Error completing task: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Lấy thống kê hàng đợi
-   * @returns {Object} Queue statistics
+   * Get queue statistics.
+   * @returns {Object} Statistics object
    */
   async getQueueStatistics() {
     try {
       return await lifterQueueService.getQueueStats();
     } catch (error) {
-      console.error('Error getting queue statistics:', error);
+      logger.error(`[LifterService] Error getting queue statistics: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Lấy danh sách tasks trong hàng đợi của một tầng
-   * @param {number} floorId - ID của tầng
-   * @returns {Array} Mảng tasks
+   * Get tasks in a floor queue.
+   * @param {number} floorId - Floor ID
+   * @returns {Array} List of task details
    */
   async getFloorQueueTasks(floorId) {
     try {
@@ -323,109 +329,121 @@ class LifterService {
 
       return tasks;
     } catch (error) {
-      console.error('Error getting floor queue tasks:', error);
+      logger.error(`[LifterService] Error getting floor queue tasks: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Lấy danh sách tasks trong hàng đợi tổng
-   * @param {number} limit - Giới hạn số lượng (0 = all)
-   * @returns {Array} Mảng tasks
+   * Get tasks in the global queue with a limit.
+   * @param {number} limit - Max number of tasks
+   * @returns {Array} List of tasks
    */
   async getGlobalQueueTasks(limit = 10) {
     try {
       return await lifterQueueService.getGlobalQueue(limit);
     } catch (error) {
-      console.error('Error getting global queue tasks:', error);
+      logger.error(`[LifterService] Error getting global queue tasks: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Xóa toàn bộ hàng đợi (dùng cho testing)
+   * Clear all queues.
    * @returns {boolean} Success
    */
   async clearAllQueues() {
     try {
       return await lifterQueueService.clearAllQueues();
     } catch (error) {
-      console.error('Error clearing all queues:', error);
+      logger.error(`[LifterService] Error clearing all queues: ${error.message}`);
       throw error;
     }
   }
 
+  /**
+   * Physically move lifter to a specific floor using PLC communication.
+   * @param {number} logicalFloorId - Logical Floor ID (138, 139)
+   * @param {string} plcId - PLC ID
+   * @returns {Object} Operation result
+   */
   async moveLifterToFloor(logicalFloorId, plcId = 'PLC_1') {
     try {
-      const targetFloor = this.mapFloorIdToLifterIndex(logicalFloorId);
+      const targetPhysFloor = this.mapFloorIdToLifterIndex(logicalFloorId);
 
-      if (!targetFloor) {
-        throw new Error(`Tầng mục tiêu không hợp lệ: ${logicalFloorId}. Phải là 138 (Tầng 1) hoặc 139 (Tầng 2).`);
+      if (!targetPhysFloor) {
+        throw new Error(
+          `Invalid target floor: ${logicalFloorId}. Must be ${FLOOR_1_ID} (Floor 1) or ${FLOOR_2_ID} (Floor 2).`,
+        );
       }
 
-      logger.info(`[LifterService] Yêu cầu di chuyển lifter tới tầng vật lý: ${targetFloor} (ID: ${logicalFloorId})`);
+      logger.info(
+        `[LifterService] Requesting lifter move to physical floor: ${targetPhysFloor} (Logical ID: ${logicalFloorId})`,
+      );
 
-      // 1. Đọc vị trí hiện tại
+      // 1. Check current position
       const posF1 = plcManager.getValue(plcId, 'LIFTER_1_POS_F1');
       const posF2 = plcManager.getValue(plcId, 'LIFTER_1_POS_F2');
-      const currentFloor = posF1 ? 1 : posF2 ? 2 : 0;
-      console.log('currentFloor', currentFloor);
+      const currentPhysFloor = posF1 ? 1 : posF2 ? 2 : 0;
 
-      if (currentFloor === targetFloor) {
-        return { success: true, message: `Lifter đã ở tầng ${targetFloor}`, currentFloor };
+      if (currentPhysFloor === targetPhysFloor) {
+        logger.info(`[LifterService] Lifter is already at floor ${targetPhysFloor}.`);
+        return {
+          success: true,
+          message: `Lifter is already at floor ${targetPhysFloor}`,
+          currentFloor: targetPhysFloor,
+        };
       }
 
-      // 2. Ghi lệnh điều khiển di chuyển
-      const ctrlTag = targetFloor === 1 ? 'LIFTER_1_CTRL_F1' : 'LIFTER_1_CTRL_F2';
+      // 2. Write control command to PLC
+      const ctrlTag = targetPhysFloor === 1 ? 'LIFTER_1_CTRL_F1' : 'LIFTER_1_CTRL_F2';
       const writeResult = await plcManager.writeValue(plcId, ctrlTag, true);
 
       if (writeResult?.error) {
-        throw new Error(`Không thể ghi lệnh điều khiển xuống PLC: ${writeResult.error}`);
+        throw new Error(`Failed to write control command to PLC: ${writeResult.error}`);
       }
 
-      // 3. Giám sát lỗi và di chuyển (mô phỏng hoặc thực tế)
-      let moveTime = 0;
-      const maxMoveTime = 2000;
-      const checkInterval = 500;
+      // 3. Monitor movement and errors
+      let moveDuration = 0;
 
       const monitorMovement = () =>
         new Promise((resolve, reject) => {
           const timer = setInterval(async () => {
-            moveTime += checkInterval;
+            moveDuration += CHECK_MOVE_INTERVAL;
 
-            // Kiểm tra lỗi
+            // Check for lifter error signal
             const hasError = plcManager.getValue(plcId, 'LIFTER_1_ERROR');
             if (hasError) {
               clearInterval(timer);
-              return reject(new Error('Lifter gặp lỗi trong quá trình di chuyển!'));
+              return reject(new Error('Lifter encountered an error during movement!'));
             }
 
-            logger.debug(`[LifterService] Đang di chuyển... (${moveTime}ms)`);
+            logger.debug(`[LifterService] Moving... (${moveDuration}ms)`);
 
-            if (moveTime >= maxMoveTime) {
+            if (moveDuration >= MAX_MOVE_TIME) {
               clearInterval(timer);
               resolve();
             }
-          }, checkInterval);
+          }, CHECK_MOVE_INTERVAL);
         });
 
       await monitorMovement();
 
-      // 4. Khi đến nơi, cập nhật vị trí sensor (Giả lập cập nhật PLC tags)
-      const targetPosTag = targetFloor === 1 ? 'LIFTER_1_POS_F1' : 'LIFTER_1_POS_F2';
-      const oldPosTag = targetFloor === 1 ? 'LIFTER_1_POS_F2' : 'LIFTER_1_POS_F1';
+      // 4. Update sensor positions and release control (Simulating PLC changes)
+      const targetPosTag = targetPhysFloor === 1 ? 'LIFTER_1_POS_F1' : 'LIFTER_1_POS_F2';
+      const oldPosTag = targetPhysFloor === 1 ? 'LIFTER_1_POS_F2' : 'LIFTER_1_POS_F1';
 
       await plcManager.writeValue(plcId, targetPosTag, true);
       await plcManager.writeValue(plcId, oldPosTag, false);
-      await plcManager.writeValue(plcId, ctrlTag, false); // Tắt lệnh điều khiển
+      await plcManager.writeValue(plcId, ctrlTag, false); // Deactivate control command
 
-      logger.info(`[LifterService] Đã đến tầng ${targetFloor}. Cập nhật sensor.`);
+      logger.info(`[LifterService] Arrived at floor ${targetPhysFloor}. Sensors updated.`);
 
       return {
         success: true,
-        message: `Đã di chuyển lifter tới tầng ${targetFloor} thành công`,
-        previousFloor: currentFloor,
-        currentFloor: targetFloor,
+        message: `Successfully moved lifter to floor ${targetPhysFloor}`,
+        previousFloor: currentPhysFloor,
+        currentFloor: targetPhysFloor,
       };
     } catch (error) {
       logger.error(`[LifterService] Error in moveLifterToFloor: ${error.message}`);

@@ -55,7 +55,6 @@ class PLCController {
       });
     } catch (error) {
       logger.error('[PLCController] Error getting PLC:', error);
-      logger.debug('[PLCController] Error getting PLC:', error);
       res.status(500).json({
         error: 'Failed to retrieve PLC information',
         message: error.message,
@@ -130,8 +129,8 @@ class PLCController {
     if (!availablePlcId) {
       return res.status(404).json({
         success: false,
-        error: 'Không có PLC nào khả thi',
-        message: 'Tất cả PLC đang bận hoặc không kết nối',
+        error: 'No available PLC found',
+        message: 'All PLCs are busy or disconnected',
       });
     }
 
@@ -141,7 +140,7 @@ class PLCController {
 
     res.status(200).json({
       success: true,
-      message: `[PLCController] PLC ${availablePlcId} khả thi, có thể thực hiện`,
+      message: `[PLCController] PLC ${availablePlcId} is available, ready for execution`,
       data: {
         taskId,
         plcId: availablePlcId,

@@ -4,12 +4,12 @@ const cellService = require('./cellService');
 
 class RowCoordinationService {
   constructor() {
-    this.ROW_ASSIGNMENT_PREFIX = 'row_coordination:batch';
-    this.DEFAULT_TTL = 3600; // 1 hour
+    this._rowAssignmentPrefix = 'row_coordination:batch';
+    this._defaultTTL = 3600; // 1 hour
   }
 
   getRowAssignmentKey(batchId) {
-    return `${this.ROW_ASSIGNMENT_PREFIX}:${batchId}`;
+    return `${this._rowAssignmentPrefix}:${batchId}`;
   }
 
   async assignRowForBatch(batchId, endNodeQr, floorId) {
@@ -18,25 +18,22 @@ class RowCoordinationService {
 
       const existingRow = await redisClient.get(key);
       if (existingRow !== null) {
-        const rowNum = parseInt(existingRow, 10);
-        return rowNum;
+        return parseInt(existingRow, 10);
       }
 
       const endNodeCell = await cellService.getCellByQrCode(endNodeQr, floorId);
       if (!endNodeCell) {
-        logger.error(`[RowCoordination] Không tìm thấy endNode ${endNodeQr} trên floor ${floorId}`);
+        logger.error(`[RowCoordination] EndNode ${endNodeQr} not found on floor ${floorId}`);
         return null;
       }
 
       const assignedRow = endNodeCell.row;
 
-      await redisClient.set(key, assignedRow.toString(), { EX: this.DEFAULT_TTL });
-
-      const endNodeName = await cellService.getCachedDisplayName(endNodeQr, floorId);
+      await redisClient.set(key, assignedRow.toString(), { EX: this._defaultTTL });
 
       return assignedRow;
     } catch (error) {
-      logger.error(`[RowCoordination] Lỗi khi gán row cho batch ${batchId}:`, error);
+      logger.error(`[RowCoordination] Error assigning row for batch ${batchId}:`, error);
       return null;
     }
   }
@@ -52,7 +49,7 @@ class RowCoordinationService {
 
       return null;
     } catch (error) {
-      logger.error(`[RowCoordination] Lỗi khi lấy assigned row cho batch ${batchId}:`, error);
+      logger.error(`[RowCoordination] Error getting assigned row for batch ${batchId}:`, error);
       return null;
     }
   }
@@ -65,7 +62,7 @@ class RowCoordinationService {
 
       return true;
     } catch (error) {
-      logger.error(`[RowCoordination] Lỗi khi giải phóng row assignment cho batch ${batchId}:`, error);
+      logger.error(`[RowCoordination] Error releasing row assignment for batch ${batchId}:`, error);
       return false;
     }
   }
@@ -79,7 +76,7 @@ class RowCoordinationService {
 
       return cell.row === assignedRow;
     } catch (error) {
-      logger.error(`[RowCoordination] Lỗi khi kiểm tra node ${nodeQr} trong row ${assignedRow}:`, error);
+      logger.error(`[RowCoordination] Error checking node ${nodeQr} in row ${assignedRow}:`, error);
       return false;
     }
   }
@@ -88,7 +85,7 @@ class RowCoordinationService {
     try {
       const currentCell = await cellService.getCellByQrCode(currentQr, floorId);
       if (!currentCell) {
-        logger.error(`[RowCoordination] Không tìm thấy current node ${currentQr}`);
+        logger.error(`[RowCoordination] Current node ${currentQr} not found`);
         return null;
       }
 
@@ -96,7 +93,7 @@ class RowCoordinationService {
       const rowCells = await CellRepository.getCellsByRow(assignedRow, floorId);
 
       if (!rowCells || rowCells.length === 0) {
-        logger.error(`[RowCoordination] Không tìm thấy cells nào trong row ${assignedRow}`);
+        logger.error(`[RowCoordination] No cells found in row ${assignedRow}`);
         return null;
       }
 
@@ -121,7 +118,7 @@ class RowCoordinationService {
 
       return null;
     } catch (error) {
-      logger.error(`[RowCoordination] Lỗi khi tìm nearest node trong row ${assignedRow}:`, error);
+      logger.error(`[RowCoordination] Error finding nearest node in row ${assignedRow}:`, error);
       return null;
     }
   }

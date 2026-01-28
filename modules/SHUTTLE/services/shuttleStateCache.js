@@ -18,7 +18,7 @@ const SHUTTLE_STATE_TTL = 10; // 10 seconds TTL - auto cleanup if shuttle discon
  *   - currentStep: current step in mission (0-based index)
  *   - shuttleStatus: current status (8=IDLE, 9=WAITING, etc.)
  *   - commandComplete: 0=in progress, 1=completed
- *   - qrCode: current node QR code (also known as current_node)
+ *   - qrCode: current node QR code (also known as currentNode)
  *   - packageStatus: 0=no cargo, 1=carrying cargo, 2=misaligned
  *   - palletLiftingStatus: 0=down, 1=up (tấm nâng)
  *   - missionCompleted: total missions completed (counter)
@@ -46,8 +46,8 @@ async function updateShuttleState(shuttleCode, state) {
       currentStep: String(state.currentStep || 0), // Current step in mission
       shuttleStatus: String(state.shuttleStatus || 8), // Convert to string for Redis
       commandComplete: String(state.commandComplete || 1),
-      qrCode: state.qrCode || state.current_node || '',
-      current_node: state.current_node || state.qrCode || '', // Prioritize current_node if explicitly provided
+      qrCode: state.qrCode || state.currentNode || state.current_node || '',
+      current_node: state.currentNode || state.current_node || state.qrCode || '', // Keep for compatibility in Redis
       packageStatus: String(state.packageStatus || 0),
       isCarrying: state.packageStatus === 1 ? 'true' : 'false', // Derived field for convenience
       palletLiftingStatus: String(state.palletLiftingStatus || 0), // 0=hạ, 1=nâng
@@ -92,7 +92,8 @@ async function getShuttleState(shuttleCode) {
       shuttleStatus: parseInt(state.shuttleStatus, 10),
       commandComplete: parseInt(state.commandComplete, 10),
       qrCode: state.qrCode,
-      current_node: state.current_node || state.qrCode, // Use stored current_node, fallback to qrCode
+      currentNode: state.current_node || state.qrCode, // Map to camelCase
+      current_node: state.current_node || state.qrCode, // Keep for compatibility
       packageStatus: parseInt(state.packageStatus, 10),
       isCarrying: state.isCarrying === 'true',
       palletLiftingStatus: parseInt(state.palletLiftingStatus, 10),

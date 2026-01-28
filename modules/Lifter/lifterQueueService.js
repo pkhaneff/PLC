@@ -1,48 +1,49 @@
 const redisClient = require('../../redis/init.redis');
+const { logger } = require('../../config/logger');
 
 /**
- * Service quản lý hàng đợi lifter sử dụng Redis
+ * Service for managing lifter queues using Redis.
  *
- * Cấu trúc Redis:
- * 1. Hàng đợi tổng (global queue): lifter:global_queue
- *    - Sorted Set: lưu yêu cầu sử dụng lifter theo thứ tự đăng ký
- *    - Score: timestamp (thời gian đăng ký)
- *    - Member: JSON string chứa {taskId, fromFloor, toFloor, lifterId, timestamp}
+ * Redis Structure:
+ * 1. Global Queue: lifter:global_queue
+ *    - Sorted Set: stores requests for lifter in registration order.
+ *    - Score: timestamp (registration time).
+ *    - Member: JSON string containing {taskId, fromFloor, toFloor, lifterId, timestamp}.
  *
- * 2. Hàng đợi từng tầng: lifter:floor:{floorId}:queue
- *    - List: lưu danh sách task IDs của tầng đó theo thứ tự FIFO
+ * 2. Floor Queue: lifter:floor:{floorId}:queue
+ *    - List: stores task IDs for a specific floor in FIFO order.
  *
- * 3. Task details: lifter:task:{taskId}
- *    - Hash: lưu chi tiết nhiệm vụ
+ * 3. Task Details: lifter:task:{taskId}
+ *    - Hash: stores detailed task information.
  */
 class LifterQueueService {
   constructor() {
-    this.GLOBAL_QUEUE_KEY = 'lifter:global_queue';
-    this.FLOOR_QUEUE_PREFIX = 'lifter:floor';
-    this.TASK_PREFIX = 'lifter:task';
-    this.PROCESSING_KEY = 'lifter:processing'; // Lưu task đang xử lý
+    this._globalQueueKey = 'lifter:global_queue';
+    this._floorQueuePrefix = 'lifter:floor';
+    this._taskPrefix = 'lifter:task';
+    this._processingKey = 'lifter:processing'; // Stores the task being processed
   }
 
   /**
-   * Tạo key cho hàng đợi của một tầng
-   * @param {number} floorId - ID của tầng
+   * Get Redis key for a floor queue.
+   * @param {number} floorId - Floor ID
    * @returns {string} Redis key
    */
   getFloorQueueKey(floorId) {
-    return `${this.FLOOR_QUEUE_PREFIX}:${floorId}:queue`;
+    return `${this._floorQueuePrefix}:${floorId}:queue`;
   }
 
   /**
-   * Tạo key cho task details
-   * @param {string} taskId - ID của nhiệm vụ
+   * Get Redis key for task details.
+   * @param {string} taskId - Task ID
    * @returns {string} Redis key
    */
   getTaskKey(taskId) {
-    return `${this.TASK_PREFIX}:${taskId}`;
+    return `${this._taskPrefix}:${taskId}`;
   }
 
   /**
-   * Tạo task ID duy nhất
+   * Generate a unique task ID.
    * @returns {string} Task ID
    */
   generateTaskId() {
@@ -50,19 +51,19 @@ class LifterQueueService {
   }
 
   /**
-   * Đăng ký một nhiệm vụ mới cần sử dụng lifter
-   * @param {number} fromFloor - Tầng xuất phát
-   * @param {number} toFloor - Tầng đích
-   * @param {number} lifterId - ID của lifter được chỉ định
-   * @param {Object} taskData - Dữ liệu bổ sung của nhiệm vụ (shuttleId, etc.)
-   * @returns {Object} { taskId, position, timestamp }
+   * Register a new task that requires the lifter.
+   * @param {number} fromFloor - Starting floor
+   * @param {number} toFloor - Destination floor
+   * @param {number} lifterId - Designated lifter ID
+   * @param {Object} taskData - Additional task data (shuttleId, etc.)
+   * @returns {Object} Registration details
    */
   async registerTask(fromFloor, toFloor, lifterId, taskData = {}) {
     const taskId = this.generateTaskId();
     const timestamp = Date.now();
 
     try {
-      // 1. Lưu chi tiết task vào Redis Hash
+      // 1. Save task details to Redis Hash
       const taskDetails = {
         taskId,
         fromFloor,
@@ -75,10 +76,10 @@ class LifterQueueService {
 
       await redisClient.hSet(this.getTaskKey(taskId), taskDetails);
 
-      // 2. Thêm task vào hàng đợi của tầng xuất phát
+      // 2. Add task to the starting floor's queue
       await redisClient.rPush(this.getFloorQueueKey(fromFloor), taskId);
 
-      // 3. Thêm yêu cầu vào hàng đợi tổng (Sorted Set với score = timestamp)
+      // 3. Add task to the global queue (Sorted Set with score = timestamp)
       const globalQueueData = {
         taskId,
         fromFloor,
@@ -87,47 +88,44 @@ class LifterQueueService {
         timestamp,
       };
 
-      await redisClient.zAdd(this.GLOBAL_QUEUE_KEY, {
+      await redisClient.zAdd(this._globalQueueKey, {
         score: timestamp,
         value: JSON.stringify(globalQueueData),
       });
 
-      // Lấy vị trí trong hàng đợi tổng
-      const position = await redisClient.zRank(this.GLOBAL_QUEUE_KEY, JSON.stringify(globalQueueData));
+      // Get rank in global queue
+      const position = await redisClient.zRank(this._globalQueueKey, JSON.stringify(globalQueueData));
 
-      console.log(
-        `✓ Task ${taskId} registered: Floor ${fromFloor} → ${toFloor}, Lifter ${lifterId}, Position: ${position + 1}`,
+      logger.info(
+        `[LifterQueue] Task ${taskId} registered: Floor ${fromFloor} → ${toFloor}, Lifter ${lifterId}, Position: ${position + 1}`,
       );
 
       return {
         taskId,
-        position: position + 1, // +1 vì rank bắt đầu từ 0
+        position: position + 1, // +1 because rank is 0-indexed
         timestamp,
         floorQueueLength: await this.getFloorQueueLength(fromFloor),
         globalQueueLength: await this.getGlobalQueueLength(),
       };
     } catch (error) {
-      console.error('Error registering task:', error);
+      logger.error(`[LifterQueue] Error registering task: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Lấy nhiệm vụ tiếp theo từ hàng đợi tổng
-   * @returns {Object|null} Task data hoặc null nếu không có task
+   * Get next task from the global queue.
+   * @returns {Object|null} Task data or null
    */
   async getNextTask() {
     try {
-      // Lấy task đầu tiên trong sorted set (score thấp nhất = đăng ký sớm nhất)
-      const tasks = await redisClient.zRange(this.GLOBAL_QUEUE_KEY, 0, 0);
+      const tasks = await redisClient.zRange(this._globalQueueKey, 0, 0);
 
       if (tasks.length === 0) {
         return null;
       }
 
       const taskData = JSON.parse(tasks[0]);
-
-      // Lấy chi tiết task từ Redis Hash
       const taskDetails = await redisClient.hGetAll(this.getTaskKey(taskData.taskId));
 
       return {
@@ -135,40 +133,36 @@ class LifterQueueService {
         ...taskDetails,
       };
     } catch (error) {
-      console.error('Error getting next task:', error);
+      logger.error(`[LifterQueue] Error getting next task: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Đánh dấu task đang được xử lý
-   * @param {string} taskId - ID của task
+   * Mark a task as being processed.
+   * @param {string} taskId - Task ID
    * @returns {boolean} Success
    */
   async markTaskAsProcessing(taskId) {
     try {
-      // Cập nhật status trong task details
       await redisClient.hSet(this.getTaskKey(taskId), 'status', 'processing');
+      await redisClient.set(this._processingKey, taskId);
 
-      // Lưu vào processing set
-      await redisClient.set(this.PROCESSING_KEY, taskId);
-
-      console.log(`✓ Task ${taskId} marked as processing`);
+      logger.info(`[LifterQueue] Task ${taskId} marked as processing`);
       return true;
     } catch (error) {
-      console.error('Error marking task as processing:', error);
+      logger.error(`[LifterQueue] Error marking task as processing: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Hoàn thành một nhiệm vụ và xóa khỏi hàng đợi
-   * @param {string} taskId - ID của nhiệm vụ
-   * @returns {Object} { success, nextTask }
+   * Complete a task and remove it from queues.
+   * @param {string} taskId - Task ID
+   * @returns {Object} Result details
    */
   async completeTask(taskId) {
     try {
-      // Lấy thông tin task trước khi xóa
       const taskDetails = await redisClient.hGetAll(this.getTaskKey(taskId));
 
       if (!taskDetails || !taskDetails.fromFloor) {
@@ -177,32 +171,31 @@ class LifterQueueService {
 
       const { fromFloor } = taskDetails;
 
-      // 1. Xóa task khỏi hàng đợi tầng
+      // 1. Remove from floor queue
       await redisClient.lRem(this.getFloorQueueKey(fromFloor), 1, taskId);
 
-      // 2. Xóa task khỏi hàng đợi tổng
-      // Tìm và xóa task trong sorted set
-      const allTasks = await redisClient.zRange(this.GLOBAL_QUEUE_KEY, 0, -1);
+      // 2. Remove from global queue
+      const allTasks = await redisClient.zRange(this._globalQueueKey, 0, -1);
       for (const taskStr of allTasks) {
         const task = JSON.parse(taskStr);
         if (task.taskId === taskId) {
-          await redisClient.zRem(this.GLOBAL_QUEUE_KEY, taskStr);
+          await redisClient.zRem(this._globalQueueKey, taskStr);
           break;
         }
       }
 
-      // 3. Xóa task details
+      // 3. Remove task details
       await redisClient.del(this.getTaskKey(taskId));
 
-      // 4. Xóa khỏi processing
-      const processingTaskId = await redisClient.get(this.PROCESSING_KEY);
+      // 4. Remove from processing
+      const processingTaskId = await redisClient.get(this._processingKey);
       if (processingTaskId === taskId) {
-        await redisClient.del(this.PROCESSING_KEY);
+        await redisClient.del(this._processingKey);
       }
 
-      console.log(`✓ Task ${taskId} completed and removed from queues`);
+      logger.info(`[LifterQueue] Task ${taskId} completed and removed from queues`);
 
-      // 5. Lấy task tiếp theo
+      // 5. Get next task
       const nextTask = await this.getNextTask();
 
       return {
@@ -213,72 +206,72 @@ class LifterQueueService {
         remainingInFloorQueue: await this.getFloorQueueLength(fromFloor),
       };
     } catch (error) {
-      console.error('Error completing task:', error);
+      logger.error(`[LifterQueue] Error completing task: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Lấy độ dài hàng đợi tổng
-   * @returns {number} Số lượng tasks
+   * Get length of global queue.
+   * @returns {number} Task count
    */
   async getGlobalQueueLength() {
     try {
-      return await redisClient.zCard(this.GLOBAL_QUEUE_KEY);
+      return await redisClient.zCard(this._globalQueueKey);
     } catch (error) {
-      console.error('Error getting global queue length:', error);
+      logger.error(`[LifterQueue] Error getting global queue length: ${error.message}`);
       return 0;
     }
   }
 
   /**
-   * Lấy độ dài hàng đợi của một tầng
-   * @param {number} floorId - ID của tầng
-   * @returns {number} Số lượng tasks
+   * Get length of a floor queue.
+   * @param {number} floorId - Floor ID
+   * @returns {number} Task count
    */
   async getFloorQueueLength(floorId) {
     try {
       return await redisClient.lLen(this.getFloorQueueKey(floorId));
     } catch (error) {
-      console.error('Error getting floor queue length:', error);
+      logger.error(`[LifterQueue] Error getting floor queue length: ${error.message}`);
       return 0;
     }
   }
 
   /**
-   * Lấy tất cả tasks trong hàng đợi của một tầng
-   * @param {number} floorId - ID của tầng
-   * @returns {Array} Mảng task IDs
+   * Get all task IDs in a floor queue.
+   * @param {number} floorId - Floor ID
+   * @returns {Array} List of task IDs
    */
   async getFloorQueue(floorId) {
     try {
       return await redisClient.lRange(this.getFloorQueueKey(floorId), 0, -1);
     } catch (error) {
-      console.error('Error getting floor queue:', error);
+      logger.error(`[LifterQueue] Error getting floor queue: ${error.message}`);
       return [];
     }
   }
 
   /**
-   * Lấy tất cả tasks trong hàng đợi tổng
-   * @param {number} limit - Giới hạn số lượng tasks trả về (0 = all)
-   * @returns {Array} Mảng tasks với thông tin đầy đủ
+   * Get tasks in global queue.
+   * @param {number} limit - Max tasks to return (0 = all)
+   * @returns {Array} List of tasks
    */
   async getGlobalQueue(limit = 0) {
     try {
       const end = limit > 0 ? limit - 1 : -1;
-      const tasks = await redisClient.zRange(this.GLOBAL_QUEUE_KEY, 0, end);
+      const tasks = await redisClient.zRange(this._globalQueueKey, 0, end);
 
       return tasks.map((taskStr) => JSON.parse(taskStr));
     } catch (error) {
-      console.error('Error getting global queue:', error);
+      logger.error(`[LifterQueue] Error getting global queue: ${error.message}`);
       return [];
     }
   }
 
   /**
-   * Lấy thông tin chi tiết của một task
-   * @param {string} taskId - ID của task
+   * Get task details by ID.
+   * @param {string} taskId - Task ID
    * @returns {Object|null} Task details
    */
   async getTaskDetails(taskId) {
@@ -286,75 +279,68 @@ class LifterQueueService {
       const details = await redisClient.hGetAll(this.getTaskKey(taskId));
       return Object.keys(details).length > 0 ? details : null;
     } catch (error) {
-      console.error('Error getting task details:', error);
+      logger.error(`[LifterQueue] Error getting task details: ${error.message}`);
       return null;
     }
   }
 
   /**
-   * Lấy task đang được xử lý
+   * Get current processing task.
    * @returns {Object|null} Task details
    */
   async getCurrentProcessingTask() {
     try {
-      const taskId = await redisClient.get(this.PROCESSING_KEY);
+      const taskId = await redisClient.get(this._processingKey);
       if (!taskId) {
         return null;
       }
 
       return await this.getTaskDetails(taskId);
     } catch (error) {
-      console.error('Error getting current processing task:', error);
+      logger.error(`[LifterQueue] Error getting current processing task: ${error.message}`);
       return null;
     }
   }
 
   /**
-   * Xóa toàn bộ hàng đợi (dùng cho testing/reset)
+   * Clear all queues.
    * @returns {boolean} Success
    */
   async clearAllQueues() {
     try {
-      // Lấy tất cả floor queue keys
-      const keys = await redisClient.keys(`${this.FLOOR_QUEUE_PREFIX}:*`);
+      const keys = await redisClient.keys(`${this._floorQueuePrefix}:*`);
 
-      // Xóa global queue
-      await redisClient.del(this.GLOBAL_QUEUE_KEY);
+      await redisClient.del(this._globalQueueKey);
+      await redisClient.del(this._processingKey);
 
-      // Xóa processing key
-      await redisClient.del(this.PROCESSING_KEY);
-
-      // Xóa tất cả floor queues
       if (keys.length > 0) {
         await redisClient.del(keys);
       }
 
-      // Xóa tất cả task details
-      const taskKeys = await redisClient.keys(`${this.TASK_PREFIX}:*`);
+      const taskKeys = await redisClient.keys(`${this._taskPrefix}:*`);
       if (taskKeys.length > 0) {
         await redisClient.del(taskKeys);
       }
 
-      console.log('✓ All queues cleared');
+      logger.info('[LifterQueue] All queues cleared');
       return true;
     } catch (error) {
-      console.error('Error clearing queues:', error);
+      logger.error(`[LifterQueue] Error clearing queues: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Lấy thống kê hàng đợi
-   * @returns {Object} Queue statistics
+   * Get queue statistics.
+   * @returns {Object} Stats object
    */
   async getQueueStats() {
     try {
       const globalLength = await this.getGlobalQueueLength();
       const processingTask = await this.getCurrentProcessingTask();
 
-      // Lấy thống kê từng tầng
       const floorStats = {};
-      const floorKeys = await redisClient.keys(`${this.FLOOR_QUEUE_PREFIX}:*:queue`);
+      const floorKeys = await redisClient.keys(`${this._floorQueuePrefix}:*:queue`);
 
       for (const key of floorKeys) {
         const floorId = key.split(':')[2];
@@ -368,7 +354,7 @@ class LifterQueueService {
         timestamp: Date.now(),
       };
     } catch (error) {
-      console.error('Error getting queue stats:', error);
+      logger.error(`[LifterQueue] Error getting queue stats: ${error.message}`);
       throw error;
     }
   }

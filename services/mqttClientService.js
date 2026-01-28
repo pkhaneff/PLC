@@ -8,18 +8,18 @@ const MQTT_USERNAME = process.env.MQTT_USERNAME || 'admin';
 const MQTT_PASSWORD = process.env.MQTT_PASSWORD || 'thaco@123';
 const MQTT_CLIENT_ID = 'backend-mqtt-client';
 
-let mqttClient = null;
-let io = null; // Socket.io instance for frontend communication
+let _mqttClient = null;
+let _io = null; // Socket.io instance for frontend communication
 
 /**
  * Initialize MQTT client connection to external broker
  * @param {object} socketIo - Socket.io instance
  */
 function initializeMqttClient(socketIo) {
-  io = socketIo;
+  _io = socketIo;
 
   // Connect to external MQTT broker
-  mqttClient = mqtt.connect(MQTT_BROKER_URL, {
+  _mqttClient = mqtt.connect(MQTT_BROKER_URL, {
     clientId: MQTT_CLIENT_ID,
     username: MQTT_USERNAME,
     password: MQTT_PASSWORD,
@@ -27,11 +27,11 @@ function initializeMqttClient(socketIo) {
     reconnectPeriod: 5000,
   });
 
-  mqttClient.on('connect', () => {
+  _mqttClient.on('connect', () => {
     logger.info(`[MqttClient] Connected to external MQTT broker at ${MQTT_BROKER_URL}`);
 
     // Subscribe to shuttle information topics
-    mqttClient.subscribe('shuttle/information/+', (err) => {
+    _mqttClient.subscribe('shuttle/information/+', (err) => {
       if (err) {
         logger.error('[MqttClient] Failed to subscribe to shuttle/information/+:', err);
       } else {
@@ -40,7 +40,7 @@ function initializeMqttClient(socketIo) {
     });
 
     // Subscribe to shuttle events
-    mqttClient.subscribe('shuttle/events', (err) => {
+    _mqttClient.subscribe('shuttle/events', (err) => {
       if (err) {
         logger.error('[MqttClient] Failed to subscribe to shuttle/events:', err);
       } else {
@@ -49,7 +49,7 @@ function initializeMqttClient(socketIo) {
     });
   });
 
-  mqttClient.on('message', async (topic, message) => {
+  _mqttClient.on('message', async (topic, message) => {
     try {
       const payload = JSON.parse(message.toString());
 
@@ -63,8 +63,8 @@ function initializeMqttClient(socketIo) {
       }
       // Handle shuttle events
       else if (topic === 'shuttle/events') {
-        if (io && payload && payload.event) {
-          io.emit(payload.event, payload);
+        if (_io && payload && payload.event) {
+          _io.emit(payload.event, payload);
           logger.debug(`[MqttClient] Emitted socket event: ${payload.event} for shuttle ${payload.shuttleId}`);
         }
       }
@@ -73,48 +73,54 @@ function initializeMqttClient(socketIo) {
     }
   });
 
-  mqttClient.on('error', (error) => {
+  _mqttClient.on('error', (error) => {
     logger.error('[MqttClient] Connection error:', error);
   });
 
-  mqttClient.on('reconnect', () => {
+  _mqttClient.on('reconnect', () => {
     logger.warn('[MqttClient] Reconnecting to MQTT broker...');
   });
 
-  mqttClient.on('close', () => {
+  _mqttClient.on('close', () => {
     logger.warn('[MqttClient] Connection closed');
   });
 
-  return mqttClient;
+  return _mqttClient;
 }
 
 /**
  * Publish message to MQTT topic
  * @param {string} topic - MQTT topic
  * @param {object} payload - Message payload
+ * @returns {Promise<void>}
  */
-function publishToTopic(topic, payload) {
-  if (!mqttClient || !mqttClient.connected) {
+async function publishToTopic(topic, payload) {
+  if (!_mqttClient || !_mqttClient.connected) {
     logger.error('[MqttClient] Cannot publish: MQTT client not connected');
     return;
   }
 
   const message = JSON.stringify(payload);
 
-  mqttClient.publish(topic, message, { qos: 1 }, (err) => {
-    if (err) {
-      logger.error(`[MqttClient] Error publishing to ${topic}:`, err);
-    } else {
-      logger.debug(`[MqttClient] Published to ${topic}`);
-    }
+  return new Promise((resolve, reject) => {
+    _mqttClient.publish(topic, message, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error(`[MqttClient] Error publishing to ${topic}:`, err);
+        reject(err);
+      } else {
+        logger.debug(`[MqttClient] Published to ${topic}`);
+        resolve();
+      }
+    });
   });
 }
 
 /**
  * Get MQTT client instance
+ * @returns {object} MQTT client
  */
 function getClient() {
-  return mqttClient;
+  return _mqttClient;
 }
 
 module.exports = {

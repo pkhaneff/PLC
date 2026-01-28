@@ -2,14 +2,18 @@ const { logger } = require('../../../config/logger');
 const redisClient = require('../../../redis/init.redis');
 const { getShuttleState } = require('../services/shuttleStateCache');
 
+const CARGO_WEIGHT = 1000000000;
+const MAX_TASK_ID = 999999;
+const PRIORITY_CACHE_TTL = 300; // 5 minutes in seconds
+
 /**
  * Service for calculating shuttle priority in conflict resolution.
  *
  * Priority Formula:
- * priority = (isCarrying ? 1,000,000 : 0) + (999,999 - taskId) + waitingTime
+ * priority = (isCarrying ? CARGO_WEIGHT : 0) + (MAX_TASK_ID - taskId) + waitingTime
  *
  * Rules:
- * 1. Shuttles carrying cargo have highest priority (1M+ points)
+ * 1. Shuttles carrying cargo have highest priority
  * 2. Among same cargo status, lower task ID = higher priority (FIFO)
  * 3. Waiting time is tie-breaker (longer wait = slightly higher priority)
  */
@@ -41,13 +45,10 @@ class PriorityCalculationService {
       const taskId = taskInfo?.taskId || 0;
 
       // Calculate priority components
-      // 1. Cargo: 1 Billion points
-      const cargoWeight = isCarrying ? 1000000000 : 0;
+      const cargoWeight = isCarrying ? CARGO_WEIGHT : 0;
+      const taskWeight = MAX_TASK_ID - taskId;
 
-      // 2. Task Order: Inverted TaskID.
-      const taskWeight = 999999 - taskId;
-
-      // NO WAITING TIME per user instructions.
+      // Waiting time tie-breaker (if requested, though currently not added)
       const priority = cargoWeight + taskWeight;
 
       logger.debug(`[PriorityCalc] Shuttle ${shuttleId}: cargo=${isCarrying}, taskId=${taskId} → priority=${priority}`);
@@ -119,7 +120,7 @@ class PriorityCalculationService {
   async updatePriorityInRedis(shuttleId, priority) {
     try {
       const key = `shuttle:${shuttleId}:priority`;
-      await redisClient.set(key, priority.toString(), { EX: 300 }); // Expire after 5 minutes
+      await redisClient.set(key, priority.toString(), { EX: PRIORITY_CACHE_TTL });
       return true;
     } catch (error) {
       logger.error(`[PriorityCalc] Error updating priority in Redis for ${shuttleId}:`, error);

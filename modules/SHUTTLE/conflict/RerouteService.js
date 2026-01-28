@@ -4,6 +4,14 @@ const { publishToTopic } = require('../../../services/mqttClientService');
 const redisClient = require('../../../redis/init.redis');
 const PathCacheService = require('../services/PathCacheService');
 
+const CARRYING_COST_LIMIT = 140;
+const EMPTY_COST_LIMIT = 200;
+const RETRY_BONUS = 50;
+const WAITING_TIME_BONUS_INTERVAL = 15;
+const WAITING_TIME_BONUS = 50;
+const MAX_ACCEPTED_COST_PERCENTAGE = 500;
+const REROUTE_STATUS_TTL = 300; // 5 minutes in seconds
+
 class RerouteService {
   async calculateBackupReroute(shuttleId, conflict, currentNode, targetNode, floorId, options = {}) {
     try {
@@ -112,25 +120,25 @@ class RerouteService {
       let tier = '';
 
       if (options.isCarrying) {
-        maxAcceptablePercentage = 140;
+        maxAcceptablePercentage = CARRYING_COST_LIMIT;
         tier = 'TIER1_CARRYING';
       } else {
-        maxAcceptablePercentage = 200;
+        maxAcceptablePercentage = EMPTY_COST_LIMIT;
         tier = 'TIER1_EMPTY';
       }
 
       const retryCount = options.retryCount || 0;
       if (retryCount > 0) {
-        const retryBonus = retryCount * 50;
-        maxAcceptablePercentage += retryBonus;
+        const retryBonusValue = retryCount * RETRY_BONUS;
+        maxAcceptablePercentage += retryBonusValue;
         tier = `TIER2_RETRY${retryCount}`;
-        logger.debug(`[Reroute] Retry bonus: +${retryBonus}% (retry #${retryCount})`);
+        logger.debug(`[Reroute] Retry bonus: +${retryBonusValue}% (retry #${retryCount})`);
       }
 
       if (options.waitingTime > 0) {
         const waitingSeconds = options.waitingTime / 1000;
 
-        const timeBonus = Math.floor(waitingSeconds / 15) * 50;
+        const timeBonus = Math.floor(waitingSeconds / WAITING_TIME_BONUS_INTERVAL) * WAITING_TIME_BONUS;
         maxAcceptablePercentage += timeBonus;
 
         if (waitingSeconds >= 45 && !options.emergency) {
@@ -145,7 +153,7 @@ class RerouteService {
       }
 
       if (tier !== 'TIER3_EMERGENCY' && tier !== 'EMERGENCY') {
-        maxAcceptablePercentage = Math.min(maxAcceptablePercentage, 500);
+        maxAcceptablePercentage = Math.min(maxAcceptablePercentage, MAX_ACCEPTED_COST_PERCENTAGE);
       }
 
       const acceptable = costIncrease <= maxAcceptablePercentage;
@@ -192,10 +200,10 @@ class RerouteService {
         onArrival: 'REROUTE_COMPLETE',
       };
 
-      publishToTopic(commandTopic, commandPayload);
+      await publishToTopic(commandTopic, commandPayload);
       await PathCacheService.savePath(shuttleId, backupPath);
-      await redisClient.set(`shuttle:${shuttleId}:status`, 'REROUTING', { EX: 300 });
-      await redisClient.set(`shuttle:${shuttleId}:backup_path`, JSON.stringify(backupPath), { EX: 300 });
+      await redisClient.set(`shuttle:${shuttleId}:status`, 'REROUTING', { EX: REROUTE_STATUS_TTL });
+      await redisClient.set(`shuttle:${shuttleId}:backup_path`, JSON.stringify(backupPath), { EX: REROUTE_STATUS_TTL });
 
       await redisClient.incr('stats:reroutes:total');
 
@@ -239,7 +247,7 @@ class RerouteService {
       const backup = await this.calculateBackupReroute(shuttleId, conflict, currentNode, targetNode, floorId, options);
 
       if (backup) {
-        await redisClient.set(`shuttle:${shuttleId}:backup_path`, JSON.stringify(backup.path), { EX: 300 });
+        await redisClient.set(`shuttle:${shuttleId}:backup_path`, JSON.stringify(backup.path), { EX: REROUTE_STATUS_TTL });
         logger.info(`[Reroute] Background backup calculation complete for ${shuttleId}`);
       } else {
         logger.warn(`[Reroute] Background backup calculation failed for ${shuttleId}`);

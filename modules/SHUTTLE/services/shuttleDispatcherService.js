@@ -1,31 +1,30 @@
 const { logger } = require('../../../config/logger');
 const shuttleTaskQueueService = require('./shuttleTaskQueueService');
-const { getAllShuttleStates } = require('./shuttleStateCache'); // Use in-memory cache
-const { publishToTopic } = require('../../../services/mqttClientService'); // To publish commands
-const cellService = require('./cellService'); // Using the alias NodeService internally
+const { getAllShuttleStates } = require('./shuttleStateCache');
+const { publishToTopic } = require('../../../services/mqttClientService');
+const cellService = require('./cellService');
 const { findShortestPath } = require('./pathfinding');
-const ReservationService = require('../../COMMON/reservationService'); // Import the new service
-const PathCacheService = require('./PathCacheService'); // Import PathCacheService
+const ReservationService = require('../../COMMON/reservationService');
+const PathCacheService = require('./PathCacheService');
 const ShuttleCounterService = require('./ShuttleCounterService');
 const { TASK_ACTIONS, MQTT_TOPICS, MISSION_CONFIG } = require('../../../config/shuttle.config');
 const { getShuttleState, updateShuttleState } = require('./shuttleStateCache');
 const NodeOccupationService = require('./NodeOccupationService');
 const MissionCoordinatorService = require('./MissionCoordinatorService');
 
-const PICKUP_LOCK_TIMEOUT = 300; // 5 minutes, same as endnode for consistency
+const PICKUP_LOCK_TIMEOUT = 300; // 5 minutes
 
 class ShuttleDispatcherService {
   constructor(io) {
-    // appEvents no longer needed here
-    this.io = io;
-    this.dispatchInterval = 5000;
-    this.dispatcherTimer = null;
-    this.activeMissions = new Map(); // Track active missions for retry mechanism
+    this._io = io;
+    this._dispatchInterval = 5000;
+    this._dispatcherTimer = null;
+    this._activeMissions = new Map(); // Track active missions for retry mechanism
   }
 
   /**
-   * Publishes a mission to a shuttle with automatic retry mechanism
-   * Retries every 500ms for up to 30 seconds if no response is received
+   * Publishes a mission to a shuttle with automatic retry mechanism.
+   * Retries every 500ms for up to 30 seconds if no response is received.
    * @param {string} topic - MQTT topic to publish to
    * @param {object} payload - Mission payload
    * @param {string} shuttleId - Shuttle identifier
@@ -46,7 +45,6 @@ class ShuttleDispatcherService {
       }
 
       const elapsed = Date.now() - startTime;
-
       const shuttleState = await getShuttleState(shuttleId);
 
       // Check for multiple ACK signals:
@@ -61,7 +59,8 @@ class ShuttleDispatcherService {
         acknowledged = true;
         const reason = isActuallyRunningOurTask ? 'Task ID Match' : isBusy ? 'Shuttle Busy' : 'Command ACK (0)';
         clearInterval(retryInterval);
-        this.activeMissions.delete(missionId);
+        this._activeMissions.delete(missionId);
+        logger.debug(`[ShuttleDispatcherService] Mission ${missionId} acknowledged. Reason: ${reason}`);
         return;
       }
 
@@ -71,8 +70,7 @@ class ShuttleDispatcherService {
           `[ShuttleDispatcherService] Mission ${missionId} timed out after ${MISSION_CONFIG.RETRY_TIMEOUT}ms. No response from shuttle ${shuttleId}`,
         );
         clearInterval(retryInterval);
-        this.activeMissions.delete(missionId);
-        // Handle timeout - maybe mark task as failed, release locks, etc.
+        this._activeMissions.delete(missionId);
         return;
       }
 
@@ -85,21 +83,23 @@ class ShuttleDispatcherService {
     }, MISSION_CONFIG.RETRY_INTERVAL);
 
     // Store the interval reference for potential cleanup
-    this.activeMissions.set(missionId, { interval: retryInterval, startTime, shuttleId });
+    this._activeMissions.set(missionId, { interval: retryInterval, startTime, shuttleId });
   }
 
-  // Helper function to calculate Manhattan distance (or similar heuristic)
-  // Considers floor changes as a significant penalty
+  /**
+   * Calculate distance heuristic (Manhattan distance).
+   * Considers floor changes as a significant penalty.
+   */
   async calculateDistanceHeuristic(coords1, coords2) {
     if (!coords1 || !coords2) {
       return Infinity;
     }
 
-    const { col: col1, row: row1, floor_id: floor1 } = coords1;
-    const { col: col2, row: row2, floor_id: floor2 } = coords2;
+    const { col: col1, row: row1, floorId: floor1 } = coords1;
+    const { col: col2, row: row2, floorId: floor2 } = coords2;
 
     if (floor1 !== floor2) {
-      // Thêm penalty lớn cho việc đổi tầng (ví dụ: 1000 units)
+      // Large penalty for floor change (e.g., 1000 units)
       return 1000 + Math.abs(col1 - col2) + Math.abs(row1 - row2);
     }
 
@@ -107,25 +107,19 @@ class ShuttleDispatcherService {
   }
 
   /**
-   * Xác định row traffic direction dựa trên pickup node và end node
-   * Logic: Direction được xác định bởi movement TRONG row từ pickup → end
+   * Determine row traffic direction based on pickup node and end node.
    * @returns {number} Direction code (1=LEFT_TO_RIGHT, 2=RIGHT_TO_LEFT)
    */
   async determineRowTrafficDirection(startQr, pickupQr, floorId, targetRow) {
     try {
-      // Lấy thông tin pickup node (đây là điểm vào row từ T-column)
       const pickupCell = await cellService.getCellByQrCode(pickupQr, floorId);
 
       if (!pickupCell) {
         return 1; // Default: LEFT_TO_RIGHT
       }
 
-      // Pickup node thường ở T-column (cột trái nhất)
-      // Direction được xác định bởi: Từ pickup node, shuttle sẽ đi sang phải (LEFT_TO_RIGHT)
-      // vì tất cả storage nodes đều ở bên phải pickup node
-
-      // CRITICAL: Luôn luôn return LEFT_TO_RIGHT vì pickup node luôn ở bên trái cùng
-      // Tất cả shuttle đều vào từ pickup node và đi sang phải vào storage area
+      // Pickup node is usually in T-column (leftmost column)
+      // Direction is determined by movement into the storage area (left to right)
       return 1; // LEFT_TO_RIGHT
     } catch (error) {
       logger.error('[ShuttleDispatcherService] Error determining row traffic direction:', error);
@@ -143,33 +137,30 @@ class ShuttleDispatcherService {
     let taskPickupCoords = null;
 
     try {
-      // Get coordinates for the task's pickup node (now using QR)
       taskPickupCoords = await cellService.getCellByQrCode(task.pickupNodeQr, task.pickupNodeFloorId);
       if (!taskPickupCoords) {
-        logger.warn(`Task pickupNodeQr ${pickupName} on floor ${task.pickupNodeFloorId} not found in cellService.`);
+        logger.warn(`Task pickupNodeQr ${task.pickupNodeQr} on floor ${task.pickupNodeFloorId} not found.`);
         return null;
       }
 
       for (const shuttle of idleShuttles) {
         let shuttleCurrentCoords = null;
-        // Search globally for the shuttle's current node to handle cases where it might be on a different floor
-        const candidates = await cellService.getCellByQrCodeAnyFloor(shuttle.current_node);
+        const candidates = await cellService.getCellByQrCodeAnyFloor(shuttle.currentNode);
 
         if (!candidates || candidates.length === 0) {
-          const currentNodeName = await cellService.getDisplayNameWithoutFloor(shuttle.current_node);
-          logger.warn(`Shuttle ${shuttle.id} current_node ${currentNodeName} not found in DB (Any Floor).`);
+          const currentNodeName = await cellService.getDisplayNameWithoutFloor(shuttle.currentNode);
+          logger.warn(`Shuttle ${shuttle.id} currentNode ${currentNodeName} not found in DB.`);
           continue;
         }
 
-        shuttleCurrentCoords = candidates[0]; // Lấy thông tin tầng thực tế của shuttle
-
+        shuttleCurrentCoords = candidates[0];
         const distance = await this.calculateDistanceHeuristic(shuttleCurrentCoords, taskPickupCoords);
 
         if (distance < minDistance) {
           minDistance = distance;
           optimalShuttle = {
             ...shuttle,
-            qrCode: shuttle.current_node, // Ensure qrCode property is set
+            qrCode: shuttle.currentNode,
           };
         }
       }
@@ -190,16 +181,14 @@ class ShuttleDispatcherService {
       task = await shuttleTaskQueueService.getNextPendingTask();
       if (!task) {
         logger.debug('[ShuttleDispatcherService] No pending tasks found.');
-        return; // No pending tasks
+        return;
       }
 
-      // 2. Attempt to lock the pickupNode, or verify we already own the lock
-      // Use pickupNodeQr
+      // 2. Attempt to lock the pickupNode
       pickupResourceKey = `pickup:lock:${task.pickupNodeQr}`;
       let isLockAcquired = await ReservationService.acquireLock(pickupResourceKey, task.taskId, PICKUP_LOCK_TIMEOUT);
 
       if (!isLockAcquired) {
-        // If lock failed, check if we are already the owner
         const currentOwner = await ReservationService.getLockOwner(pickupResourceKey);
         if (currentOwner === task.taskId) {
           isLockAcquired = true;
@@ -209,15 +198,13 @@ class ShuttleDispatcherService {
       }
 
       // 3. Find optimal shuttle
-      // CRITICAL FIX: getAllShuttleStates() is now async (reads from Redis)
       const allShuttleStates = await getAllShuttleStates();
-
       const idleShuttles = allShuttleStates
         .filter((s) => s.shuttleStatus === 8) // 8 = IDLE
         .map((s) => ({
           ...s,
-          id: s.no || s.id, // Ensure ID is present
-          current_node: s.current_node || s.qrCode, // Prioritize current_node, fallback to qrCode
+          id: s.id || s.no,
+          currentNode: s.currentNode,
         }));
 
       if (idleShuttles.length === 0) {
@@ -226,30 +213,23 @@ class ShuttleDispatcherService {
       }
 
       const optimalShuttle = await this.findOptimalShuttle(task, idleShuttles);
-
       if (!optimalShuttle) {
         return;
       }
-
-      const fromName = await cellService.getDisplayNameWithoutFloor(optimalShuttle.current_node);
-      const toName = await cellService.getCachedDisplayName(task.pickupNodeQr, task.pickupNodeFloorId);
 
       // 4. Dispatch task to the chosen shuttle
       return await this.dispatchTaskToShuttle(task, optimalShuttle.id);
     } catch (error) {
       logger.error('[ShuttleDispatcherService] Error during task dispatch:', error);
-      // If a lock was acquired and an unexpected error occurred, release it to prevent a deadlock
       if (pickupResourceKey && task) {
-        logger.error(`[ShuttleDispatcherService] Releasing lock for ${pickupResourceKey} due to unexpected error.`);
+        logger.error(`[ShuttleDispatcherService] Releasing lock for ${pickupResourceKey} due to error.`);
         await ReservationService.releaseLock(pickupResourceKey);
       }
     }
   }
 
   /**
-   * Trực tiếp gán và gửi nhiệm vụ cho một shuttle cụ thể
-   * @param {object} task - Dữ liệu task
-   * @param {string} shuttleId - ID của shuttle
+   * Directly assign and send a mission to a specific shuttle.
    */
   async dispatchTaskToShuttle(task, shuttleId) {
     try {
@@ -277,10 +257,10 @@ class ShuttleDispatcherService {
       const missionTopic = `${MQTT_TOPICS.HANDLE}/${shuttleId}`;
       await this.publishMissionWithRetry(missionTopic, missionPayload, shuttleId);
 
-      // 4. Update Task Status & Shuttle State
+      // 2. Update Task Status & Shuttle State
       await shuttleTaskQueueService.updateTaskStatus(task.taskId, 'assigned', shuttleId);
 
-      // 5. Update shuttle counter
+      // 3. Update shuttle counter
       await ShuttleCounterService.updateCounter();
 
       return { success: true, taskId: task.taskId };
@@ -291,17 +271,17 @@ class ShuttleDispatcherService {
   }
 
   startDispatcher() {
-    if (this.dispatcherTimer) {
+    if (this._dispatcherTimer) {
       logger.warn('[ShuttleDispatcherService] Dispatcher is already running.');
       return;
     }
-    this.dispatcherTimer = setInterval(() => this.dispatchNextTask(), this.dispatchInterval);
+    this._dispatcherTimer = setInterval(() => this.dispatchNextTask(), this._dispatchInterval);
   }
 
   stopDispatcher() {
-    if (this.dispatcherTimer) {
-      clearInterval(this.dispatcherTimer);
-      this.dispatcherTimer = null;
+    if (this._dispatcherTimer) {
+      clearInterval(this._dispatcherTimer);
+      this._dispatcherTimer = null;
     }
   }
 }

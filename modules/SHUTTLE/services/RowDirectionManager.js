@@ -12,40 +12,40 @@ const DIRECTION = {
 };
 
 /**
- * Service quản lý direction lock cho mỗi row
- * Đảm bảo tất cả shuttle trong cùng 1 row đi cùng 1 hướng (one-way traffic)
+ * Service to manage direction lock for each row.
+ * Ensures all shuttles in the same row move in the same direction (one-way traffic).
  */
 class RowDirectionManager {
   constructor() {
-    this.LOCK_TTL = 300; // 5 phút
-    this.CLEANUP_INTERVAL = 60000; // 1 phút
+    this._lockTTL = 300; // 5 minutes in seconds
+    this._cleanupInterval = 60000; // 1 minute in milliseconds
 
     // Start cleanup job
-    this.startCleanupJob();
+    this._startCleanupJob();
   }
 
   /**
-   * Tạo Redis key cho row direction lock
+   * Create Redis key for row direction lock.
    */
-  getRowKey(floorId, rowIdentifier) {
+  _getRowKey(floorId, rowIdentifier) {
     return `row:${floorId}:${rowIdentifier}:direction`;
   }
 
   /**
-   * Lock direction cho 1 row
-   * @param {string|number} rowIdentifier - Row ID (ví dụ: 5, "B")
+   * Lock direction for a row.
+   * @param {string|number} rowIdentifier - Row identifier (e.g., 5, "B")
    * @param {number} floorId - Floor ID
    * @param {number} direction - Direction code (1=LEFT_TO_RIGHT, 2=RIGHT_TO_LEFT)
    * @param {string} shuttleId - Shuttle ID
-   * @returns {Promise<boolean>} True nếu lock thành công
+   * @returns {Promise<boolean>} True if lock successful
    */
   async lockRowDirection(rowIdentifier, floorId, direction, shuttleId) {
     try {
-      const key = this.getRowKey(floorId, rowIdentifier);
+      const key = this._getRowKey(floorId, rowIdentifier);
       const existingLock = await redisClient.get(key);
 
       if (!existingLock) {
-        // Row chưa có direction lock, tạo mới
+        // Row has no direction lock, create new one
         const lockData = {
           direction,
           shuttles: [shuttleId],
@@ -53,28 +53,28 @@ class RowDirectionManager {
           lockedBy: shuttleId,
         };
 
-        await redisClient.set(key, JSON.stringify(lockData), { EX: this.LOCK_TTL });
+        await redisClient.set(key, JSON.stringify(lockData), { EX: this._lockTTL });
         logger.info(
           `[RowDirectionManager] Locked row ${rowIdentifier} (floor ${floorId}) with direction ${direction} for shuttle ${shuttleId}`,
         );
         return true;
       }
 
-      // Row đã có lock
+      // Row already has a lock
       const lock = JSON.parse(existingLock);
 
       if (lock.direction === direction) {
-        // Cùng direction, cho phép shuttle vào
+        // Same direction, allow shuttle to join
         if (!lock.shuttles.includes(shuttleId)) {
           lock.shuttles.push(shuttleId);
-          await redisClient.set(key, JSON.stringify(lock), { EX: this.LOCK_TTL });
+          await redisClient.set(key, JSON.stringify(lock), { EX: this._lockTTL });
           logger.debug(
             `[RowDirectionManager] Shuttle ${shuttleId} joined row ${rowIdentifier} (direction ${direction})`,
           );
         }
         return true;
       } else {
-        // Khác direction, từ chối
+        // Different direction, deny access
         logger.warn(
           `[RowDirectionManager] Shuttle ${shuttleId} cannot enter row ${rowIdentifier}: direction mismatch (required: ${lock.direction}, requested: ${direction})`,
         );
@@ -87,11 +87,11 @@ class RowDirectionManager {
   }
 
   /**
-   * Release shuttle khỏi row direction lock
+   * Release shuttle from row direction lock.
    */
   async releaseShuttleFromRow(rowIdentifier, floorId, shuttleId) {
     try {
-      const key = this.getRowKey(floorId, rowIdentifier);
+      const key = this._getRowKey(floorId, rowIdentifier);
       const existingLock = await redisClient.get(key);
 
       if (!existingLock) {
@@ -102,14 +102,14 @@ class RowDirectionManager {
       lock.shuttles = lock.shuttles.filter((id) => id !== shuttleId);
 
       if (lock.shuttles.length === 0) {
-        // Không còn shuttle nào, xóa lock hoàn toàn
+        // No more shuttles, delete the lock
         await redisClient.del(key);
         logger.info(
           `[RowDirectionManager] Row ${rowIdentifier} (floor ${floorId}) direction lock released (no shuttles left)`,
         );
       } else {
-        // Còn shuttle khác, update lock
-        await redisClient.set(key, JSON.stringify(lock), { EX: this.LOCK_TTL });
+        // Other shuttles remain, update the lock
+        await redisClient.set(key, JSON.stringify(lock), { EX: this._lockTTL });
       }
     } catch (error) {
       logger.error(`[RowDirectionManager] Error releasing shuttle from row:`, error);
@@ -117,11 +117,11 @@ class RowDirectionManager {
   }
 
   /**
-   * Clear direction lock cho row (khi row đầy)
+   * Clear direction lock for row (e.g., when row is full).
    */
   async clearRowDirectionLock(rowIdentifier, floorId) {
     try {
-      const key = this.getRowKey(floorId, rowIdentifier);
+      const key = this._getRowKey(floorId, rowIdentifier);
       await redisClient.del(key);
       logger.info(`[RowDirectionManager] Cleared direction lock for row ${rowIdentifier} (floor ${floorId})`);
     } catch (error) {
@@ -130,12 +130,12 @@ class RowDirectionManager {
   }
 
   /**
-   * Get current direction của row (nếu có)
-   * @returns {Promise<number|null>} Direction code hoặc null
+   * Get current direction of the row.
+   * @returns {Promise<number|null>} Direction code or null
    */
   async getRowDirection(rowIdentifier, floorId) {
     try {
-      const key = this.getRowKey(floorId, rowIdentifier);
+      const key = this._getRowKey(floorId, rowIdentifier);
       const lock = await redisClient.get(key);
       return lock ? JSON.parse(lock).direction : null;
     } catch (error) {
@@ -145,7 +145,7 @@ class RowDirectionManager {
   }
 
   /**
-   * Cleanup stale locks (chạy định kỳ)
+   * Cleanup stale locks (run periodically).
    */
   async cleanupStaleLocks() {
     try {
@@ -160,7 +160,7 @@ class RowDirectionManager {
         const lockData = JSON.parse(lock);
         const age = Date.now() - lockData.lockedAt;
 
-        // Nếu lock quá 10 phút, xóa đi (shuttle có thể đã crash)
+        // If lock is older than 10 minutes, remove it (shuttle might have crashed)
         if (age > 600000) {
           await redisClient.del(key);
           logger.warn(`[RowDirectionManager] Cleaned up stale lock for ${key} (age: ${age}ms)`);
@@ -172,12 +172,12 @@ class RowDirectionManager {
   }
 
   /**
-   * Start cleanup job
+   * Start cleanup job.
    */
-  startCleanupJob() {
+  _startCleanupJob() {
     setInterval(() => {
       this.cleanupStaleLocks();
-    }, this.CLEANUP_INTERVAL);
+    }, this._cleanupInterval);
   }
 }
 

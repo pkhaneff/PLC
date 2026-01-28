@@ -2,6 +2,8 @@ const { logger } = require('../../../config/logger');
 const redisClient = require('../../../redis/init.redis');
 const cellService = require('./cellService');
 
+const DEFAULT_TTL = 300; // 5 minutes in seconds
+
 /**
  * Service for managing node occupation using Redis.
  *
@@ -17,10 +19,10 @@ class NodeOccupationService {
    *
    * @param {string} nodeQr - QR code of node to block
    * @param {string} shuttleId - ID of shuttle occupying the node
-   * @param {number} [ttl=300] - Time to live in seconds (default 5 minutes)
+   * @param {number} [ttl=DEFAULT_TTL] - Time to live in seconds
    * @returns {Promise<boolean>} Success status
    */
-  async blockNode(nodeQr, shuttleId, ttl = 300) {
+  async blockNode(nodeQr, shuttleId, ttl = DEFAULT_TTL) {
     try {
       const key = `node:${nodeQr}:occupied_by`;
       await redisClient.set(key, shuttleId, { EX: ttl });
@@ -144,12 +146,10 @@ class NodeOccupationService {
       const pattern = 'node:*:occupied_by';
       const keys = await redisClient.keys(pattern);
 
-      let clearedCount = 0;
       for (const key of keys) {
         const occupier = await redisClient.get(key);
         if (occupier === shuttleId) {
           await redisClient.del(key);
-          clearedCount++;
         }
       }
 

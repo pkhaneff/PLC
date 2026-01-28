@@ -10,7 +10,7 @@ const { MQTT_TOPICS } = require('../../../config/shuttle.config');
 
 class OutboundTaskHandler {
   /**
-   * Xử lý sau khi shuttle lấy hàng từ storage node (pickup complete)
+   * Handle shutdown after shuttle picks up cargo from storage node (pickup complete).
    * @param {string} taskId - Task ID
    * @param {string} shuttleId - Shuttle ID
    * @param {object} dispatcher - Dispatcher instance
@@ -28,19 +28,19 @@ class OutboundTaskHandler {
     await shuttleTaskQueueService.updateTaskStatus(taskId, 'in_progress');
     await redisClient.hSet(taskKey, 'pickupCompleted', 'true');
 
-    // Cập nhật cell: Xóa hàng khỏi pickup node
+    // Update cell: Remove cargo from pickup node
     const pickupNodeCell = await cellService.getCellByQrCode(pickupNodeQr, pickupNodeFloorId);
     if (pickupNodeCell) {
       await cellService.updateCellHasBox(pickupNodeCell.id, false);
-      logger.info(`[OutboundHandler] Updated pickup node ${pickupNodeQr}: is_has_box = 0, pallet_id = NULL`);
+      logger.info(`[OutboundHandler] Updated pickup node ${pickupNodeQr}: isHasBox = 0, palletId = NULL`);
     } else {
       logger.error(
-        `[OutboundHandler] Cannot find pickup node cell QR '${pickupNodeQr}' in DB. Cannot update is_has_box.`,
+        `[OutboundHandler] Cannot find pickup node cell QR '${pickupNodeQr}' in DB. Cannot update isHasBox.`,
       );
     }
 
     try {
-      // Tính toán path đến outNode (end node)
+      // Calculate path to outNode (end node)
       const missionPayload = await MissionCoordinatorService.calculateNextSegment(
         shuttleId,
         endNodeQr,
@@ -52,22 +52,22 @@ class OutboundTaskHandler {
           endNodeQr: endNodeQr,
           itemInfo: taskDetails.itemInfo,
           isCarrying: true,
-          enforceOneWay: false, // Outbound không cần one-way logic
-          ignoreBoxOnNodes: [pickupNodeQr], // Option 1: Bỏ qua node vừa bốc hàng khi tìm đường
+          enforceOneWay: false, // Outbound does not need one-way logic
+          ignoreBoxOnNodes: [pickupNodeQr], // Ignore the node just picked up
         },
       );
 
-      // Cập nhật shuttle package state
+      // Update shuttle package state
       const currentShuttleState = (await getShuttleState(shuttleId)) || {};
       await updateShuttleState(shuttleId, { ...currentShuttleState, isCarrying: true, packageStatus: 1 });
       await redisClient.hSet(taskKey, 'isCarrying', 'true');
 
-      // Gửi mission
+      // Send mission
       const missionTopic = `${MQTT_TOPICS.HANDLE}/${shuttleId}`;
       if (dispatcher && dispatcher.publishMissionWithRetry) {
         await dispatcher.publishMissionWithRetry(missionTopic, missionPayload, shuttleId);
       } else {
-        mqttClientService.publishToTopic(missionTopic, missionPayload);
+        await mqttClientService.publishToTopic(missionTopic, missionPayload);
       }
 
       logger.info(`[OutboundHandler] Sent mission to shuttle ${shuttleId} to move to outNode ${endNodeQr}`);
@@ -78,7 +78,7 @@ class OutboundTaskHandler {
   }
 
   /**
-   * Xử lý sau khi shuttle thả hàng tại outNode (task complete)
+   * Handle task completion after shuttle drops off cargo at outNode.
    * @param {string} taskId - Task ID
    * @param {string} shuttleId - Shuttle ID
    * @param {object} dispatcher - Dispatcher instance
@@ -94,19 +94,19 @@ class OutboundTaskHandler {
       return;
     }
 
-    // Cập nhật task status
+    // Update task status
     await shuttleTaskQueueService.updateTaskStatus(taskId, 'completed');
 
     logger.info(`[OutboundHandler] Task ${taskId} completed. Pallet delivered to outNode ${taskDetails.endNodeQr}`);
 
-    // Cập nhật shuttle state về IDLE
+    // Update shuttle state to IDLE
     const currentState = (await getShuttleState(shuttleId)) || {};
     await updateShuttleState(shuttleId, {
       ...currentState,
       shuttleStatus: 8, // IDLE
       packageStatus: 0,
       isCarrying: false,
-      current_node: taskDetails.endNodeQr,
+      currentNode: taskDetails.endNodeQr,
       qrCode: taskDetails.endNodeQr,
       taskId: '',
       targetQr: '',
@@ -114,7 +114,7 @@ class OutboundTaskHandler {
 
     logger.info(`[OutboundHandler] Shuttle ${shuttleId} returned to IDLE state`);
 
-    // Auto process inbound queue nếu shuttle trong executing mode
+    // Auto process inbound queue if shuttle is in executing mode
     setTimeout(async () => {
       const controller = require('../../../controllers/shuttle.controller');
       const result = await controller.autoProcessInboundQueue(shuttleId);

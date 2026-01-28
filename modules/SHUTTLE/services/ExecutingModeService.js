@@ -2,22 +2,22 @@ const { logger } = require('../../../config/logger');
 const redisClient = require('../../../redis/init.redis');
 
 /**
- * Service để quản lý shuttles đang trong "execute mode"
- * Execute mode = shuttle đã được kích hoạt qua /execute-storage và tự động lấy tasks từ queue
+ * Service to manage shuttles in "execute mode"
+ * Execute mode = shuttle has been activated via /execute-storage and automatically retrieves tasks from queue
  */
 class ExecutingModeService {
   constructor() {
-    this.EXECUTING_SET_KEY = 'shuttle:executing_mode';
+    this._executingSetKey = 'shuttle:executing_mode';
   }
 
   /**
-   * Thêm shuttle vào execute mode
-   * @param {string} shuttleId - ID của shuttle
+   * Add shuttle to execute mode
+   * @param {string} shuttleId - ID of the shuttle
    * @returns {Promise<boolean>}
    */
   async addShuttle(shuttleId) {
     try {
-      await redisClient.sAdd(this.EXECUTING_SET_KEY, shuttleId);
+      await redisClient.sAdd(this._executingSetKey, shuttleId);
       logger.info(`[ExecutingModeService] Shuttle ${shuttleId} added to executing mode`);
       return true;
     } catch (error) {
@@ -27,13 +27,13 @@ class ExecutingModeService {
   }
 
   /**
-   * Xóa shuttle khỏi execute mode
-   * @param {string} shuttleId - ID của shuttle
+   * Remove shuttle from execute mode
+   * @param {string} shuttleId - ID of the shuttle
    * @returns {Promise<boolean>}
    */
   async removeShuttle(shuttleId) {
     try {
-      await redisClient.sRem(this.EXECUTING_SET_KEY, shuttleId);
+      await redisClient.sRem(this._executingSetKey, shuttleId);
       logger.info(`[ExecutingModeService] Shuttle ${shuttleId} removed from executing mode`);
       return true;
     } catch (error) {
@@ -43,13 +43,13 @@ class ExecutingModeService {
   }
 
   /**
-   * Kiểm tra shuttle có trong execute mode không
-   * @param {string} shuttleId - ID của shuttle
+   * Check if shuttle is in execute mode
+   * @param {string} shuttleId - ID of the shuttle
    * @returns {Promise<boolean>}
    */
   async isShuttleExecuting(shuttleId) {
     try {
-      const isMember = await redisClient.sIsMember(this.EXECUTING_SET_KEY, shuttleId);
+      const isMember = await redisClient.sIsMember(this._executingSetKey, shuttleId);
       return isMember;
     } catch (error) {
       logger.error(`[ExecutingModeService] Error checking shuttle ${shuttleId}:`, error);
@@ -58,12 +58,12 @@ class ExecutingModeService {
   }
 
   /**
-   * Lấy tất cả shuttles đang trong execute mode
+   * Get all shuttles in execute mode
    * @returns {Promise<string[]>}
    */
   async getExecutingShuttles() {
     try {
-      const shuttles = await redisClient.sMembers(this.EXECUTING_SET_KEY);
+      const shuttles = await redisClient.sMembers(this._executingSetKey);
       return shuttles || [];
     } catch (error) {
       logger.error('[ExecutingModeService] Error getting executing shuttles:', error);
@@ -72,12 +72,12 @@ class ExecutingModeService {
   }
 
   /**
-   * Đếm số lượng shuttles đang trong execute mode
+   * Count the number of shuttles in execute mode
    * @returns {Promise<number>}
    */
   async getExecutingCount() {
     try {
-      const count = await redisClient.sCard(this.EXECUTING_SET_KEY);
+      const count = await redisClient.sCard(this._executingSetKey);
       return count || 0;
     } catch (error) {
       logger.error('[ExecutingModeService] Error counting executing shuttles:', error);
@@ -86,12 +86,12 @@ class ExecutingModeService {
   }
 
   /**
-   * Xóa tất cả shuttles khỏi execute mode (cleanup)
+   * Remove all shuttles from execute mode (cleanup)
    * @returns {Promise<boolean>}
    */
   async clearAll() {
     try {
-      await redisClient.del(this.EXECUTING_SET_KEY);
+      await redisClient.del(this._executingSetKey);
       logger.info('[ExecutingModeService] Cleared all shuttles from executing mode');
       return true;
     } catch (error) {
