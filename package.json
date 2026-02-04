@@ -15,9 +15,11 @@
   "description": "",
   "dependencies": {
     "aedes": "^0.51.3",
+    "axios": "^1.13.4",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "ioredis": "^5.9.2",
     "mqtt": "^5.14.1",
     "mysql2": "^3.16.0",
     "nodes7": "^0.3.18",

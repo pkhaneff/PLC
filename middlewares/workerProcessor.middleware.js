@@ -1,15 +1,21 @@
 const workerManager = require('../worker/workerManager');
 const { logger } = require('../config/logger');
 
-async function processWorkerTask(taskId, plcId, io) {
+let _plcEventHandler = null;
+
+function setEventHandler(plcEventHandler) {
+  _plcEventHandler = plcEventHandler;
+}
+
+async function processWorkerTask(taskId, plcId) {
   try {
     const result = await workerManager.executeTask(taskId, plcId, 'fetch_data', {
       plcId,
       delay: 3000,
     });
 
-    if (result.status === 'success') {
-      io.emit('plc-processing-complete', {
+    if (result.status === 'success' && _plcEventHandler) {
+      _plcEventHandler.emitProcessingComplete({
         taskId,
         plcId: result.plcId,
         message: result.data.message,
@@ -20,13 +26,15 @@ async function processWorkerTask(taskId, plcId, io) {
   } catch (error) {
     logger.error(`[WorkerProcessorMiddleware] Task ${taskId} failed:`, error);
 
-    io.emit('plc-processing-error', {
-      taskId,
-      plcId,
-      error: error.message,
-      timestamp: new Date().toISOString(),
-    });
+    if (_plcEventHandler) {
+      _plcEventHandler.emitProcessingError({
+        taskId,
+        plcId,
+        error: error.message,
+        timestamp: new Date().toISOString(),
+      });
+    }
   }
 }
 
-module.exports = { processWorkerTask };
+module.exports = { processWorkerTask, setEventHandler };

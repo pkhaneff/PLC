@@ -15,11 +15,10 @@ const MissionCoordinatorService = require('./MissionCoordinatorService');
 const PICKUP_LOCK_TIMEOUT = 300; // 5 minutes
 
 class ShuttleDispatcherService {
-  constructor(io) {
-    this._io = io;
+  constructor() {
     this._dispatchInterval = 5000;
     this._dispatcherTimer = null;
-    this._activeMissions = new Map(); // Track active missions for retry mechanism
+    this._activeMissions = new Map();
   }
 
   /**

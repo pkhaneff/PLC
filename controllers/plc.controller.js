@@ -148,8 +148,7 @@ class PLCController {
       },
     });
 
-    const io = req.app.get('io');
-    processWorkerTask(taskId, availablePlcId, io).catch((error) => {
+    processWorkerTask(taskId, availablePlcId).catch((error) => {
       logger.error('[PLCController] Error processing worker task:', error);
     });
   });

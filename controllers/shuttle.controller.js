@@ -25,12 +25,12 @@ class ShuttleController {
     return listNode;
   };
 
-  findPathCrossFloor = async (start, end, start_floor_id, end_floor_id, lifter_id) => {};
+  findPathCrossFloor = async (start, end, start_floor_id, end_floor_id, lifter_id) => { };
 
-  nodeFinding = asyncHandler(async (req, res) => {});
+  nodeFinding = asyncHandler(async (req, res) => { });
 
-  registerShuttle = asyncHandler(async (req, res) => {});
-  updatePosition = asyncHandler(async (req, res) => {});
+  registerShuttle = asyncHandler(async (req, res) => { });
+  updatePosition = asyncHandler(async (req, res) => { });
 
   /**
    * Kiểm tra xem ID pallet cùng loại đã tồn tại trong hệ thống chưa (hàng đợi hoặc đang xử lý)
@@ -268,7 +268,7 @@ class ShuttleController {
       logger.info(`[Controller] Step 1: Sent run permission to shuttle ${shuttle_code}`);
 
       // 6. Dispatch task trực tiếp cho shuttle được chỉ định (SAU khi đã có run permission)
-      const dispatcher = new shuttleDispatcherService(req.app.get('io'));
+      const dispatcher = new shuttleDispatcherService();
       await dispatcher.dispatchTaskToShuttle(taskData, shuttle_code);
       logger.info(`[Controller] Step 2: Dispatched task to shuttle ${shuttle_code}`);
 
@@ -824,7 +824,7 @@ class ShuttleController {
       logger.info(`[Controller] Sent run permission to shuttle ${shuttle_code} for outbound`);
 
       // 10. Dispatch task
-      const dispatcher = new shuttleDispatcherService(req.app.get('io'));
+      const dispatcher = new shuttleDispatcherService();
       await dispatcher.dispatchTaskToShuttle(taskData, shuttle_code);
       logger.info(`[Controller] Dispatched outbound task ${taskId} to shuttle ${shuttle_code}`);
 
