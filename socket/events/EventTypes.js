@@ -1,12 +1,3 @@
-const AMR_EVENTS = Object.freeze({
-    TASK_QUEUED: 'amr:task:queued',
-    TASK_ASSIGNED: 'amr:task:assigned',
-    TASK_STARTED: 'amr:task:started',
-    TASK_PROGRESS: 'amr:task:progress',
-    TASK_COMPLETED: 'amr:task:completed',
-    TASK_FAILED: 'amr:task:failed',
-});
-
 const SHUTTLE_EVENTS = Object.freeze({
     TASK_QUEUED: 'shuttle:task:queued',
     TASK_ASSIGNED: 'shuttle:task:assigned',
@@ -37,7 +28,6 @@ const SYSTEM_EVENTS = Object.freeze({
 });
 
 module.exports = {
-    AMR_EVENTS,
     SHUTTLE_EVENTS,
     MQTT_EVENTS,
     PLC_EVENTS,

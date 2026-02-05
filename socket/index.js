@@ -1,7 +1,6 @@
 const socketServer = require('./core/SocketServer');
 const connectionManager = require('./core/ConnectionManager');
 const eventEmitter = require('./events/EventEmitter');
-const amrEventHandler = require('./events/handlers/AMREventHandler');
 const shuttleEventHandler = require('./events/handlers/ShuttleEventHandler');
 const mqttEventHandler = require('./events/handlers/MQTTEventHandler');
 const plcEventHandler = require('./events/handlers/PLCEventHandler');
@@ -23,7 +22,6 @@ module.exports = {
     socketServer,
     connectionManager,
     eventEmitter,
-    amrEventHandler,
     shuttleEventHandler,
     mqttEventHandler,
     plcEventHandler,

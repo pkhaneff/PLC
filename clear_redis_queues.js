@@ -3,7 +3,6 @@ const redisClient = require('./redis/init.redis');
 const { logger } = require('./config/logger'); // Import logger
 
 async function run() {
-  console.log('Connecting to Redis...');
   // Ensure redisClient is connected
   if (!redisClient.isOpen) {
     // Wait for 'connect' event if not already open

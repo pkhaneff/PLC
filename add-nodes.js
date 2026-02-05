@@ -8,7 +8,6 @@ const backupPath = 'modules/AMR/mapAMR.smap.backup';
 if (fs.existsSync(backupPath)) {
     const backup = JSON.parse(fs.readFileSync(backupPath, 'utf-8'));
     fs.writeFileSync(mapPath, JSON.stringify(backup, null, 2));
-    console.log('✓ Restored from backup');
 }
 
 const data = JSON.parse(fs.readFileSync(mapPath, 'utf-8'));
@@ -83,11 +82,6 @@ Object.keys(nodeConnections).forEach(fromNode => {
 
 fs.writeFileSync(mapPath, JSON.stringify(data, null, 2));
 
-console.log('\n=== Map Generation Complete ===\n');
-console.log(`✓ Total nodes: ${data.advancedPointList.length}`);
-console.log(`✓ Total connections: ${processedPairs.size}\n`);
-
-console.log('Node connections (from config):');
 Object.keys(nodeConnections).forEach(node => {
     console.log(`${node} = {${nodeConnections[node].join(', ')}}`);
 });

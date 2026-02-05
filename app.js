@@ -4,7 +4,6 @@ const http = require('http');
 const cors = require('cors');
 const {
   initializeSocket,
-  amrEventHandler,
   mqttEventHandler,
   plcEventHandler
 } = require('./socket');
@@ -20,7 +19,6 @@ const { initializeMqttClient } = require('./services/mqttClientService');
 const { initializeMqttBroker } = require('./services/mqttService');
 const PathCacheService = require('./modules/SHUTTLE/services/PathCacheService');
 const { setEventHandler: setWorkerEventHandler } = require('./middlewares/workerProcessor.middleware');
-const amr = require('./modules/AMR');
 
 const app = express();
 const server = http.createServer(app);
@@ -39,9 +37,6 @@ app.use(errorHandler);
 async function startServer() {
   try {
     await plcManager.initializeMultiplePLCs(plcsConfig);
-
-    amr.setEventHandler(amrEventHandler);
-    amr.initializePolling();
 
     setWorkerEventHandler(plcEventHandler);
 
