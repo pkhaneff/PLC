@@ -6,6 +6,10 @@ const { lifterService } = require('../../../core/bootstrap');
 const NodeOccupationService = require('./NodeOccupationService');
 const PathCacheService = require('./PathCacheService');
 const { TASK_ACTIONS } = require('../../../config/shuttle.config');
+const lifterMonitoring = require('../../Lifter/LifterMonitoringService');
+const lifterPathAnalyzer = require('../../Lifter/path/LifterPathAnalyzer');
+const shuttleWaitState = require('./ShuttleWaitStateService');
+const { lifter: lifterConfig } = require('../../../config/shuttle.config');
 
 class MissionCoordinatorService {
   /**
@@ -39,6 +43,10 @@ class MissionCoordinatorService {
 
       logger.info(
         `[MissionCoordinator] Calculating path for ${shuttleId}: (${currentQr}, F${currentFloorId}) -> (${finalTargetQr}, F${finalTargetFloorId})`,
+      );
+
+      logger.info(
+        `[MissionCoordinator] isCrossFloor=${Number(currentFloorId) !== Number(finalTargetFloorId)} (current=${currentFloorId}, target=${finalTargetFloorId})`,
       );
 
       let targetQr = finalTargetQr;
@@ -76,6 +84,8 @@ class MissionCoordinatorService {
         targetFloorId = currentFloorId;
         onArrival = 'ARRIVED_AT_LIFTER';
         lastStepAction = TASK_ACTIONS.STOP_AT_NODE; // Dừng lại ở cửa Lifter
+      } else {
+        logger.info(`[MissionCoordinator] Same-floor mission, no lifter needed.`);
       }
 
       // --- TÌM ĐƯỜNG A* ---
@@ -107,7 +117,6 @@ class MissionCoordinatorService {
         throw new Error(`Failed to find path to ${targetQr}`);
       }
 
-      // Lưu path vào cache với metadata liên quan
       await PathCacheService.savePath(shuttleId, fullPath, {
         taskId: options.taskId,
         isCarrying: options.isCarrying || false,
@@ -115,112 +124,30 @@ class MissionCoordinatorService {
         targetFloorId: finalTargetFloorId,
       });
 
-      // --- NEW: LOOKAHEAD LOGIC FOR LIFTER ---
-      // ONLY apply when cross-floor movement is required
-      if (isCrossFloor) {
-        // Scan path for Lifter Node (T4/X5555Y5555)
-        const LIFTER_NODE_QR = 'X5555Y5555';
-        let lifterIndex = -1;
+      // --- LIFTER SAFETY CHECK ---
+      // Skip lifter check if shuttle is already at a lifter node (exiting lifter area)
+      const isAtLifterNode = lifterConfig.nodes.includes(currentQr);
 
-        // fullPath.steps contains step1, step2...
-        // We need to iterate to find the LIFTER_NODE_QR
-        for (let i = 1; i <= fullPath.totalStep; i++) {
-          const stepStr = fullPath[`step${i}`];
-          if (stepStr && stepStr.startsWith(LIFTER_NODE_QR)) {
-            lifterIndex = i;
-            break;
-          }
-        }
+      if (isAtLifterNode) {
+        logger.info(`[MissionCoordinator] Shuttle ${shuttleId} is at lifter node ${currentQr}, skipping lifter check (exiting lifter)`);
+      } else {
+        // Always check if path goes through lifter area, regardless of cross-floor or same-floor
+        logger.info(`[MissionCoordinator] Checking if path intersects with lifter area...`);
+        const lifterPreCheck = await this._checkLifterReadiness(
+          shuttleId,
+          fullPath,
+          currentFloorId,
+          options,
+          finalTargetQr,
+          finalTargetFloorId,
+          isCrossFloor,
+        );
 
-        if (lifterIndex !== -1) {
-          // Path crosses Lifter Node
-          const LifterCoordinationService = require('../../Lifter/LifterCoordinationService');
-          const lifterStatus = await LifterCoordinationService.getLifterStatus();
-
-          // Check if we need to wait
-          // Wait if: Lifter is NOT at current floor OR Lifter is busy moving
-          // Note: If Lifter is at current floor but Status is MOVING (to another floor?), we should wait.
-          // But getLifterStatus returns Redis status.
-          const isLifterAtFloor = lifterStatus && String(lifterStatus.currentFloor) === String(currentFloorId);
-          const isLifterMoving = lifterStatus && lifterStatus.status === 'MOVING';
-
-          if (!isLifterAtFloor || isLifterMoving) {
-            logger.info(
-              `[MissionCoordinator] Lifter Lookahead: Lifter not ready at F${currentFloorId} (Status: ${lifterStatus?.status}, Floor: ${lifterStatus?.currentFloor}). Requesting...`,
-            );
-
-            // 1. Request Lifter
-            await LifterCoordinationService.requestLifter(currentFloorId, shuttleId, 1);
-
-            // 2. Truncate Path
-            // We must stop BEFORE entering the Lifter.
-            // Lifter is at lifterIndex. We stop at lifterIndex - 1.
-            const stopIndex = lifterIndex - 1;
-
-            if (stopIndex < 1) {
-              // We are AT the neighbor already.
-              // Path length 0? No, we just stay put?
-              // If stopIndex < 1, it means the very next step is Lifter.
-              // But calculateNextSegment implies we are moving FROM somewhere.
-              // If we are already at neighbor, findShortestPath(neighbor, target) -> step1 is Lifter.
-              // So stopIndex = 0.
-              // We return a "WAIT" mission (no movement).
-              logger.info(`[MissionCoordinator] Shuttle ${shuttleId} is already at entry. Waiting for Lifter.`);
-              return {
-                totalStep: 0,
-                running_path_simulation: [],
-                meta: {
-                  taskId: options.taskId,
-                  onArrival: 'WAITING_FOR_LIFTER',
-                  step: 'wait_for_lifter',
-                  finalTargetQr: finalTargetQr,
-                  finalTargetFloorId: finalTargetFloorId,
-                  pickupNodeQr: options.pickupNodeQr,
-                  endNodeQr: options.endNodeQr,
-                  itemInfo: options.itemInfo,
-                  isCarrying: options.isCarrying,
-                  waitingFloor: currentFloorId,
-                },
-              };
-            }
-
-            // Truncate path logic
-            const truncatedPath = {
-              totalStep: stopIndex,
-            };
-            const truncatedSimulation = [];
-
-            for (let i = 1; i <= stopIndex; i++) {
-              truncatedPath[`step${i}`] = fullPath[`step${i}`];
-              const qr = fullPath[`step${i}`].split('>')[0];
-              truncatedSimulation.push(qr);
-            }
-
-            // Set Last Step Action to STOP
-            // The loop above copies the string "QR>DIR:ACTION".
-            // We might want to overwrite the action of the last step to STOP/No Action
-            // But usually standard move is fine, it just ends there.
-
-            return {
-              ...truncatedPath,
-              running_path_simulation: truncatedSimulation,
-              meta: {
-                taskId: options.taskId,
-                onArrival: 'WAITING_FOR_LIFTER', // Special status
-                step: 'move_to_lifter_entry',
-                finalTargetQr: finalTargetQr,
-                finalTargetFloorId: finalTargetFloorId,
-                pickupNodeQr: options.pickupNodeQr,
-                endNodeQr: options.endNodeQr,
-                itemInfo: options.itemInfo,
-                isCarrying: options.isCarrying,
-                waitingFloor: currentFloorId,
-              },
-            };
-          }
+        if (lifterPreCheck.shouldWait) {
+          logger.info(`[MissionCoordinator] Shuttle ${shuttleId} will wait for lifter`);
+          return lifterPreCheck.payload;
         }
       }
-      // --- END LOOKAHEAD ---
 
       const pathSteps = fullPath.steps || fullPath;
 
@@ -255,6 +182,133 @@ class MissionCoordinatorService {
       logger.error(`[MissionCoordinator] Error calculating next segment for ${shuttleId}: ${error.message}`);
       throw error;
     }
+  }
+
+  async _checkLifterReadiness(shuttleId, fullPath, currentFloorId, options, finalTargetQr, finalTargetFloorId, isCrossFloor) {
+    logger.info(`[MissionCoordinator] Analyzing path for lifter nodes: ${JSON.stringify(lifterConfig.nodes)}`);
+    const analysis = lifterPathAnalyzer.analyzePathForLifter(fullPath, lifterConfig.nodes);
+
+    if (!analysis) {
+      logger.info(`[MissionCoordinator] Path does not intersect with lifter area, no check needed`);
+      return { shouldWait: false };
+    }
+
+    // If shuttle is exiting lifter area (lifter node is first step), skip lifter check
+    if (analysis.isExiting) {
+      logger.info(`[MissionCoordinator] Shuttle ${shuttleId} is exiting lifter area at step 1, skipping lifter check`);
+      return { shouldWait: false, isExiting: true };
+    }
+
+    // Lifter physically blocks T4 on BOTH floors
+    // Must check lifter position for ALL missions passing through (same-floor or cross-floor)
+    logger.info(
+      `[MissionCoordinator] Path intersects lifter at step ${analysis.lifterIndex}, node: ${analysis.lifterQr} (isCrossFloor=${isCrossFloor})`,
+    );
+
+    const lifterStatus = await lifterMonitoring.getCurrentStatus(1);
+    const targetFloor = lifterConfig.floorMapping[currentFloorId];
+
+    logger.info(
+      `[MissionCoordinator] Lifter check: current=${lifterStatus?.currentFloor}, target=${targetFloor}, status=${lifterStatus?.status}`,
+    );
+
+    const isLifterReady =
+      lifterStatus && lifterStatus.currentFloor === targetFloor && lifterStatus.status === 'IDLE';
+
+    if (isLifterReady) {
+      logger.info(`[MissionCoordinator] Lifter ready at F${targetFloor}, proceeding`);
+      return { shouldWait: false };
+    }
+
+    logger.info(
+      `[MissionCoordinator] Lifter not ready, calling proactively: F${lifterStatus?.currentFloor} → F${targetFloor}`,
+    );
+
+    await lifterMonitoring.reserveLifter(1, shuttleId, targetFloor);
+
+    // Convert targetFloor (1,2) to floor_id (138,139) for lifterService
+    const floorIdMapping = { 1: 138, 2: 139 };
+    const targetFloorId = floorIdMapping[targetFloor];
+
+    // Call lifter immediately (proactive) - don't wait for shuttle to arrive
+    logger.info(`[MissionCoordinator] Sending lifter move command to floor ${targetFloor} (floor_id=${targetFloorId})`);
+    lifterService.moveLifterToFloor(targetFloorId).catch(err => {
+      logger.error(`[MissionCoordinator] Lifter move error: ${err.message}`);
+    });
+
+    if (analysis.waitNodeIndex < 1) {
+      await shuttleWaitState.setWaitState(shuttleId, {
+        waitNodeQr: fullPath[`step1`]?.split('>')[0] || options.currentQr,
+        reason: 'WAITING_FOR_LIFTER',
+        targetLifterFloor: targetFloor,
+        resumePath: {
+          toQr: finalTargetQr,
+          toFloorId: finalTargetFloorId,
+          pickupNodeQr: options.pickupNodeQr,
+          endNodeQr: options.endNodeQr,
+          taskId: options.taskId,
+          isCarrying: options.isCarrying,
+          onArrival: options.onArrival,
+        },
+      });
+
+      return {
+        shouldWait: true,
+        payload: {
+          totalStep: 0,
+          running_path_simulation: [],
+          meta: {
+            taskId: options.taskId,
+            onArrival: 'WAITING_FOR_LIFTER',
+            step: 'wait_for_lifter',
+            finalTargetQr,
+            finalTargetFloorId,
+            pickupNodeQr: options.pickupNodeQr,
+            endNodeQr: options.endNodeQr,
+            itemInfo: options.itemInfo,
+            isCarrying: options.isCarrying,
+            waitingFloor: currentFloorId,
+          },
+        },
+      };
+    }
+
+    const truncated = lifterPathAnalyzer.truncatePathToWaitNode(fullPath, analysis.waitNodeIndex);
+
+    await shuttleWaitState.setWaitState(shuttleId, {
+      waitNodeQr: analysis.waitNodeQr,
+      reason: 'WAITING_FOR_LIFTER',
+      targetLifterFloor: targetFloor,
+      resumePath: {
+        toQr: finalTargetQr,
+        toFloorId: finalTargetFloorId,
+        pickupNodeQr: options.pickupNodeQr,
+        endNodeQr: options.endNodeQr,
+        taskId: options.taskId,
+        isCarrying: options.isCarrying,
+        onArrival: options.onArrival,
+      },
+    });
+
+    return {
+      shouldWait: true,
+      payload: {
+        ...truncated,
+        running_path_simulation: truncated.steps,
+        meta: {
+          taskId: options.taskId,
+          onArrival: 'WAITING_FOR_LIFTER',
+          step: 'move_to_wait_position',
+          finalTargetQr,
+          finalTargetFloorId,
+          pickupNodeQr: options.pickupNodeQr,
+          endNodeQr: options.endNodeQr,
+          itemInfo: options.itemInfo,
+          isCarrying: options.isCarrying,
+          waitingFloor: currentFloorId,
+        },
+      },
+    };
   }
 }
 

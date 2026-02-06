@@ -19,6 +19,8 @@ const { initializeMqttClient } = require('./services/mqttClientService');
 const { initializeMqttBroker } = require('./services/mqttService');
 const PathCacheService = require('./modules/SHUTTLE/services/PathCacheService');
 const { setEventHandler: setWorkerEventHandler } = require('./middlewares/workerProcessor.middleware');
+const lifterMonitoring = require('./modules/Lifter/LifterMonitoringService');
+const lifterReadyPoller = require('./modules/Lifter/monitoring/LifterReadyPoller');
 
 const app = express();
 const server = http.createServer(app);
@@ -45,6 +47,9 @@ async function startServer() {
 
     await PathCacheService.initialize();
 
+    lifterMonitoring.startMonitoring(1, 'PLC_1');
+    lifterReadyPoller.start();
+
     const dispatcher = new shuttleDispatcherService();
 
     initializeMqttClient(mqttEventHandler);
@@ -64,11 +69,15 @@ async function startServer() {
 
 process.on('SIGINT', () => {
   PathCacheService.stopAutoCleanup();
+  lifterReadyPoller.stop();
+  lifterMonitoring.stopAll();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   PathCacheService.stopAutoCleanup();
+  lifterReadyPoller.stop();
+  lifterMonitoring.stopAll();
   process.exit(0);
 });
 

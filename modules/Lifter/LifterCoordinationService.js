@@ -136,7 +136,7 @@ class LifterCoordinationService {
 
         if (physicalFloor && String(status.currentFloor) !== String(physicalFloor)) {
           logger.warn(
-            `[LifterCoordination] Drift detected! Redis: F${status.currentFloor}, PLC: F${physicalFloor}. Correcting...`,
+            `[LifterCoordination] Drift detected! Redis: F${status.currentFloor || 'unknown'}, PLC: F${physicalFloor}. Correcting...`,
           );
           status.currentFloor = physicalFloor;
           await redisClient.hSet(LIFTER_STATUS_KEY, 'currentFloor', physicalFloor);

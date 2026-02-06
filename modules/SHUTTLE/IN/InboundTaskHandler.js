@@ -22,13 +22,14 @@ class InboundTaskHandler {
       return;
     }
 
+    logger.info(`[InboundHandler] Task ${taskId} details:`, JSON.stringify(taskDetails, null, 2));
+
     const { pickupNodeQr, pickupNodeFloorId, endNodeQr, endNodeFloorId } = taskDetails;
     const taskKey = shuttleTaskQueueService.getTaskKey(taskId);
 
     await shuttleTaskQueueService.updateTaskStatus(taskId, 'in_progress');
     await redisClient.hSet(taskKey, 'pickupCompleted', 'true');
 
-    // --- ROW COORDINATION LOGIC (THACO SPECIFIC) ---
     const activeShuttleCount = await ShuttleCounterService.updateCounter();
     const enforceOneWay = activeShuttleCount >= 2 || !!taskDetails.batchId;
 
@@ -94,6 +95,10 @@ class InboundTaskHandler {
 
     try {
       // 1. Calculate Path
+      logger.info(
+        `[InboundHandler] Calculating drop-off path: pickup=${pickupNodeQr} (F${pickupNodeFloorId}), end=${actualEndNodeQr} (F${endNodeFloorId})`,
+      );
+
       const missionPayload = await MissionCoordinatorService.calculateNextSegment(
         shuttleId,
         actualEndNodeQr,
@@ -108,6 +113,7 @@ class InboundTaskHandler {
           enforceOneWay: enforceOneWay,
           targetRow: targetRow,
           requiredDirection: requiredDirection,
+          currentFloorId: pickupNodeFloorId,
         },
       );
 

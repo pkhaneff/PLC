@@ -141,4 +141,23 @@ module.exports = {
     enableTierLogging: true,
     collectStats: true,
   },
+
+  lifter: {
+    nodes: ['X5555Y5555'],
+    floorMapping: {
+      138: 1,
+      139: 2,
+    },
+    monitoring: {
+      pollInterval: 500,
+      timeout: 30000,
+    },
+    plcVariables: {
+      posF1: 'LIFTER_1_POS_F1',
+      posF2: 'LIFTER_1_POS_F2',
+      error: 'LIFTER_1_ERROR',
+      ctrlF1: 'LIFTER_1_CTRL_F1',
+      ctrlF2: 'LIFTER_1_CTRL_F2',
+    },
+  },
 };
